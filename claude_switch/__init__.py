@@ -157,6 +157,12 @@ BUILTIN = {
     "best":     {"model": "opus",     "provider": "anthropic", "aliases": {"haiku": "haiku", "sonnet": "sonnet", "opus": "opus"}},
     "default":  {"model": "default",  "provider": "anthropic", "aliases": {"haiku": "haiku", "sonnet": "sonnet", "opus": "opus"}},
     "opusplan": {"model": "opusplan", "provider": "anthropic", "aliases": {"haiku": "haiku", "sonnet": "sonnet", "opus": "opus"}},
+    "deepseek-pro":    {"model": "deepseek-v4-pro",    "provider": "deepseek",   "aliases": {"haiku": "deepseek-v4-pro",    "sonnet": "deepseek-v4-pro",    "opus": "deepseek-v4-pro"}},
+    "deepseek-flash":  {"model": "deepseek-v4-flash",  "provider": "deepseek",   "aliases": {"haiku": "deepseek-v4-flash",  "sonnet": "deepseek-v4-flash",  "opus": "deepseek-v4-flash"}},
+    "minimax-m2.7":    {"model": "minimax-m2.7",       "provider": "minimax",    "aliases": {"haiku": "minimax-m2.7",       "sonnet": "minimax-m2.7",       "opus": "minimax-m2.7"}},
+    "glm-5":           {"model": "z-ai/glm-5",         "provider": "openrouter", "aliases": {"haiku": "z-ai/glm-5",          "sonnet": "z-ai/glm-5",          "opus": "z-ai/glm-5"}},
+    "kimi-k2.6":       {"model": "moonshotai/kimi-k2.6","provider": "openrouter", "aliases": {"haiku": "moonshotai/kimi-k2.6", "sonnet": "moonshotai/kimi-k2.6", "opus": "moonshotai/kimi-k2.6"}},
+    "gemini-flash":    {"model": "google/gemini-2.5-flash","provider": "openrouter", "aliases": {"haiku": "google/gemini-2.5-flash","sonnet": "google/gemini-2.5-flash","opus": "google/gemini-2.5-flash"}},
 }
 BUILTIN_NAMES = set(BUILTIN.keys())
 
@@ -428,6 +434,22 @@ def do_switch(profile_name: str, scope: str, path: Path, label: str,
     record_switch(matched, scope, path)
     print(f"[{label}]  \u2192  {cfg['model']}{switch_auth_info(cfg)}")
 
+    env_key = provider_env_key(cfg.get("provider", ""))
+    has_explicit_token = cfg.get("auth_token") or cfg.get("auth", {}).get("token") or cfg.get("api_key")
+    if env_key and not has_explicit_token and not os.environ.get(env_key):
+        print(f"\n  \u26a0  ${env_key} 未设置")
+        print(f"  export {env_key}=\"your-key\"")
+        print(f"  source ~/.zshrc  # 或 ~/.bashrc")
+
+
+def alias_display(aliases: dict) -> str:
+    """Return alias display string. Always show aliases so users know what /model haiku etc. resolve to."""
+    parts = []
+    for a in ("haiku", "sonnet", "opus"):
+        if aliases.get(a):
+            parts.append(f"{a}\u2192{aliases[a]}")
+    return f"  [{', '.join(parts)}]" if parts else ""
+
 
 def group_by_provider(profiles: dict) -> dict[str, list[tuple[str, dict]]]:
     groups: dict[str, list] = {}
@@ -473,14 +495,9 @@ def interactive_pick(scope: str, path: Path, label: str, preview: bool = False) 
             flat.append((name, cfg))
             tag = "\u2605" if cfg["model"] == current_model else " "
             info = cfg["model"]
-            aliases = cfg.get("aliases", {})
-            if aliases:
-                alias_strs = []
-                for a in ("haiku", "sonnet", "opus"):
-                    if aliases.get(a):
-                        alias_strs.append(f"{a}\u2192{aliases[a]}")
-                if alias_strs:
-                    info += f"  [{', '.join(alias_strs)}]"
+            alias_str = alias_display(cfg.get("aliases", {}))
+            if alias_str:
+                info += alias_str
             elif cfg.get("desc"):
                 info += f"  \u2014 {cfg['desc']}"
             print(f"    {idx:>2}. {tag} {name:<16} {info:<60}")
@@ -509,23 +526,21 @@ def interactive_pick(scope: str, path: Path, label: str, preview: bool = False) 
 def show_first_time_guide() -> None:
     print(r"""
 ╭──────────────────────────────────────────────────╮
-│  👋 欢迎使用 claude-switch v""" + VERSION + r"""                       │
+│  👋 欢迎使用 claude-switch v""" + VERSION + r"""                      │
 │                                                  │
-│  内置 Anthropic 模型:                             │
-│    claude-switch sonnet / opus / haiku               │
+│  内置热门模型 (开箱即用):                          │
+│    sonnet · haiku · opus           (Anthropic)   │
+│    deepseek-pro  · deepseek-flash  (DeepSeek)    │
+│    minimax-m2.7                    (MiniMax)     │
+│    glm-5 · kimi-k2.6 · gemini-flash (OpenRouter) │
 │                                                  │
-│  内置 Provider 预设 (base_url 已锁定):            │
-│    deepseek  ← api.deepseek.com/anthropic         │
-│    minimax   ← api.minimax.io/anthropic           │
+│  设置 API Key 后即可使用:                          │
+│    export DEEPSEEK_API_KEY="sk-xxx"              │
+│    export OPENROUTER_API_KEY="sk-or-v1-xxx"      │
+│    export MINIMAX_API_KEY="sk-xxx"               │
 │                                                  │
-│  API Key 自动读取环境变量:                         │
-│    $DEEPSEEK_API_KEY / $MINIMAX_API_KEY           │
-│                                                  │
-│  添加模型 (一行):                                 │
-│    claude-switch add dp-pro deepseek-v4-pro -p deepseek │
-│                                                  │
-│  查看所有:                                        │
-│    claude-switch providers / list / --help            │
+│  更多:                                            │
+│    claude-switch list / --help / --help-zh          │
 ╰──────────────────────────────────────────────────╯
 """)
 
@@ -536,14 +551,9 @@ def cmd_list(profiles: dict) -> None:
         print_provider_header(prov_key)
         for name, cfg in items:
             info = cfg["model"]
-            aliases = cfg.get("aliases", {})
-            if aliases:
-                alias_strs = []
-                for a in ("haiku", "sonnet", "opus"):
-                    if aliases.get(a):
-                        alias_strs.append(f"{a}\u2192{aliases[a]}")
-                if alias_strs:
-                    info += f"  [{', '.join(alias_strs)}]"
+            alias_str = alias_display(cfg.get("aliases", {}))
+            if alias_str:
+                info += alias_str
             print(f"    {name:<18} {info:<50} {profile_provider_label(name, cfg)}")
         print()
 
