@@ -2,6 +2,8 @@
 
 Multi-provider model switcher for claude-code. Switch between Anthropic, DeepSeek, MiniMax, OpenRouter — like opencode.
 
+> [中文文档](README_zh.md)
+
 ## Install
 
 ```bash
