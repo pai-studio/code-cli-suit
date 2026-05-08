@@ -10,9 +10,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from claude_switch.ccs import HELP, HELP_ZH, _parse_cc_options, _run_tui
+from claude_switch.ccs import (
+    HELP,
+    HELP_ZH,
+    _parse_cc_options,
+    _parse_monitor_args,
+    _parse_sidebar_args,
+    _run_tui,
+    _session_picker_marker,
+    _tail_nonempty,
+)
 from claude_switch.models import add_model_mapping, list_providers, resolve_model_spec
-from claude_switch.session import SessionManager
+from claude_switch.session import CodeSession, SessionManager
 from claude_switch.tui import CcsTuiApp, DEFAULT_TUI_MODEL, parse_new_session_request
 
 
@@ -45,6 +54,31 @@ class CcsParseTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             _run_tui(["--bad"])
 
+    def test_sidebar_args_support_focus_back_pane(self):
+        current, main_pane = _parse_sidebar_args(["--current", "api", "--main-pane", "%2"])
+
+        self.assertEqual(current, "api")
+        self.assertEqual(main_pane, "%2")
+
+    def test_session_picker_marker_shows_current_and_cursor(self):
+        self.assertEqual(_session_picker_marker(is_selected=True, is_current=True), ">*")
+        self.assertEqual(_session_picker_marker(is_selected=True, is_current=False), "> ")
+        self.assertEqual(_session_picker_marker(is_selected=False, is_current=True), " *")
+        self.assertEqual(_session_picker_marker(is_selected=False, is_current=False), "  ")
+
+    def test_monitor_args_are_low_burden(self):
+        names, lines, interval, once = _parse_monitor_args(
+            ["api", "ui", "--lines", "80", "--interval", "1.5", "--once"]
+        )
+
+        self.assertEqual(names, ["api", "ui"])
+        self.assertEqual(lines, 80)
+        self.assertEqual(interval, 1.5)
+        self.assertTrue(once)
+
+    def test_tail_nonempty_trims_blank_tail(self):
+        self.assertEqual(_tail_nonempty("a\nb\n\n", 1), "b")
+
 
 class SessionHelperTests(unittest.TestCase):
     def test_claude_argv_adds_settings_and_name(self):
@@ -76,6 +110,16 @@ class SessionHelperTests(unittest.TestCase):
 
         self.assertEqual(argv, ["claude", "--name", "custom"])
 
+    def test_shell_command_isolates_claude_config_dir(self):
+        command = SessionManager._shell_command(
+            ["claude", "--name", "review"],
+            Path("/tmp/ccs-review.claude.config"),
+        )
+
+        self.assertIn("exec env", command)
+        self.assertIn("CLAUDE_CONFIG_DIR=/tmp/ccs-review.claude.config", command)
+        self.assertIn("claude --name review", command)
+
     def test_write_claude_settings_uses_0600_permissions(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "session.settings.json"
@@ -104,6 +148,141 @@ class SessionHelperTests(unittest.TestCase):
 
         self.assertIn("ccs/sessions", str(path))
         self.assertTrue(path.name.endswith(".claude.settings.json"))
+
+    def test_config_dir_path_uses_xdg_state_home(self):
+        with tempfile.TemporaryDirectory() as td:
+            old = os.environ.get("XDG_STATE_HOME")
+            os.environ["XDG_STATE_HOME"] = td
+            try:
+                path = SessionManager._config_dir_path("api-review", "claude")
+            finally:
+                if old is None:
+                    os.environ.pop("XDG_STATE_HOME", None)
+                else:
+                    os.environ["XDG_STATE_HOME"] = old
+
+        self.assertIn("ccs/sessions", str(path))
+        self.assertTrue(path.name.endswith(".claude.config"))
+
+    def test_view_session_name_is_per_code_session(self):
+        code = SessionManager._view_session_name("code")
+        review = SessionManager._view_session_name("review")
+
+        self.assertTrue(code.startswith("ccs-view-code-"))
+        self.assertTrue(review.startswith("ccs-view-review-"))
+        self.assertNotEqual(code, review)
+
+    def test_attach_uses_per_session_grouped_view(self):
+        calls = []
+        manager = object.__new__(SessionManager)
+        session = CodeSession(
+            name="review",
+            tool="claude",
+            model="an/sonnet",
+            project="/tmp/project",
+            index=2,
+            pid=123,
+            running=True,
+        )
+
+        def fake_tmux(*args):
+            calls.append(args)
+            if args[:2] == ("show-option", "-wqv"):
+                return "%9"
+            return ""
+
+        view_session = SessionManager._view_session_name("review")
+
+        def fake_raw(*args):
+            exists = any(call == ("new-session", "-d", "-t", "ccs", "-s", view_session) for call in calls)
+            code = 0 if args == ("has-session", "-t", view_session) and exists else 1
+            return type("R", (), {"returncode": code, "stdout": "", "stderr": ""})()
+
+        manager.list = lambda: [session]
+        manager._tmux = fake_tmux
+        manager._raw = fake_raw
+        manager._sync_sidebar = lambda name: calls.append(("sync-sidebar", name))
+
+        with patch.dict(os.environ, {}, clear=True), patch("subprocess.run") as run:
+            manager.attach("review")
+
+        joined = [" ".join(args) for args in calls]
+        self.assertTrue(any(f"new-session -d -t ccs -s {view_session}" in call for call in joined))
+        self.assertTrue(any(f"select-window -t {view_session}:2" in call for call in joined))
+        run.assert_called_once_with(["tmux", "attach-session", "-t", view_session])
+
+    def test_sidebar_is_disabled_by_default(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(SessionManager._sidebar_enabled())
+
+    def test_sidebar_can_be_enabled_for_legacy_users(self):
+        with patch.dict(os.environ, {SessionManager.SIDEBAR_ENV: "1"}, clear=True):
+            self.assertTrue(SessionManager._sidebar_enabled())
+
+    def test_tmux_mouse_is_disabled_by_default(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(SessionManager._mouse_enabled())
+
+    def test_tmux_mouse_can_be_enabled_for_scrolling(self):
+        with patch.dict(os.environ, {SessionManager.MOUSE_ENV: "1"}, clear=True):
+            self.assertTrue(SessionManager._mouse_enabled())
+
+    def test_ccs_key_bindings_use_ccs_select_commands(self):
+        calls = []
+
+        manager = object.__new__(SessionManager)
+
+        def fake_tmux(*args):
+            calls.append(args)
+            return ""
+
+        manager._tmux = fake_tmux
+        manager._ensure_key_bindings()
+
+        joined = [" ".join(args) for args in calls]
+        self.assertTrue(any("ccs select next" in call for call in joined))
+        self.assertTrue(any("ccs select prev" in call for call in joined))
+        self.assertTrue(any("ccs focus" in call for call in joined))
+        self.assertTrue(any("ccs-view-" in call for call in joined))
+        self.assertFalse(any("previous-window" == args[-1] for args in calls if args[:2] == ("bind-key", "-n")))
+        self.assertFalse(any("next-window" == args[-1] for args in calls if args[:2] == ("bind-key", "-n")))
+
+    def test_status_bar_contains_low_burden_hints(self):
+        calls = []
+        manager = object.__new__(SessionManager)
+
+        def fake_tmux(*args):
+            calls.append(args)
+            return ""
+
+        manager._tmux = fake_tmux
+        manager._ensure_status_bar(SessionManager.TMUX_SESSION)
+
+        joined = [" ".join(args) for args in calls]
+        self.assertTrue(any("Fn-Up/Fn-Down scroll" in call for call in joined))
+        self.assertTrue(any("C-b i focus" in call for call in joined))
+        self.assertTrue(any("j/k u/d g/G" in call for call in joined))
+
+    def test_copy_mode_supports_scroll_without_page_keys(self):
+        calls = []
+        manager = object.__new__(SessionManager)
+
+        def fake_tmux(*args):
+            calls.append(args)
+            return ""
+
+        manager._tmux = fake_tmux
+        manager._ensure_key_bindings()
+
+        joined = [" ".join(args) for args in calls]
+        self.assertTrue(any("PPage" in call for call in joined))
+        self.assertTrue(any("NPage" in call for call in joined))
+        self.assertTrue(any("page-up" in call for call in joined))
+        self.assertTrue(any("page-down" in call for call in joined))
+        self.assertTrue(any("halfpage-up" in call for call in joined))
+        self.assertTrue(any("halfpage-down" in call for call in joined))
+        self.assertTrue(any("history-top" in call for call in joined))
+        self.assertTrue(any("history-bottom" in call for call in joined))
 
 
 class ModelRegistryTests(unittest.TestCase):

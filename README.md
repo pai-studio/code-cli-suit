@@ -51,9 +51,12 @@ ccs claude --cc-model ds/flash --permission-mode acceptEdits
 
 1. 解析 `provider/model`
 2. 生成当前会话专属 settings 文件
-3. 用 `claude --settings <session-settings>` 启动 Claude
-4. 把 Claude 放入 tmux session `ccs`
-5. 自动 attach 到该会话
+3. 为当前会话生成独立 `CLAUDE_CONFIG_DIR`
+4. 用 `CLAUDE_CONFIG_DIR=<session-config> claude --settings <session-settings>` 启动 Claude
+5. 把 Claude 放入 tmux session `ccs`
+6. 自动 attach 到该会话
+
+`CLAUDE_CONFIG_DIR` 隔离很重要：Claude Code 的 session history、UI 状态、credentials、plugins 默认都在 `~/.claude` 下。`ccs` 为每个托管 session 自动使用独立目录，避免同一个项目里开 `code` 和 `review` 时消息历史或输入状态互相串联。
 
 未指定 `--cc-model` 时，`ccs claude ...` 直接透传到原始 Claude。
 
@@ -115,7 +118,25 @@ ccs attach api-review
 
 # 删除会话并清理会话 settings
 ccs kill api-review
+
+# 同时监控多个 session 的最近输出，不进入 Claude
+ccs monitor
+ccs monitor api-review ui-fix --lines 80
 ```
+
+低负担默认路线是：用 `ccs claude ...` 创建/进入会话，用 `ccs list/attach/switch/kill/monitor` 在命令行管理会话。tmux 内部只承担隔离运行，不要求用户理解 pane/window。
+
+同一个项目可以同时开多个独立终端窗口：
+
+```bash
+ccs claude --cc-name code --cc-model ds/flash
+ccs claude --cc-name review --cc-model an/sonnet --cc-no-attach
+
+# 在另一个终端窗口进入 review
+ccs attach review
+```
+
+`ccs attach <name>` 会为每个会话使用独立的 tmux view session，避免两个终端 attach 到同一个 tmux session 后互相同步当前窗口和输入。
 
 ### TUI 快捷键
 
@@ -130,6 +151,53 @@ q      退出 TUI
 ```
 
 TUI 退出不会停止 tmux 中运行的 session。
+
+进入 session 后默认保持 Claude Code 全屏，不显示额外侧栏，避免把用户带入 tmux pane/window 细节。
+
+### 会话内快捷键
+
+```text
+F2        打开 ccs session 选择器
+F3        切到上一个 session
+F4        切到下一个 session
+F10       离开当前附着，Claude 继续后台运行
+Ctrl-b s  打开 ccs session 选择器备用方式
+Ctrl-b p  切到上一个 session 备用方式
+Ctrl-b n  切到下一个 session 备用方式
+Ctrl-b d  detach 备用方式
+```
+
+正常情况下不需要手动恢复焦点；`ccs attach`、session 切换、picker 选择后都会自动切回 Claude 主输入 pane。
+
+滚动：
+
+```text
+Fn+↑      向上翻页查看上下文
+Fn+↓      向下翻页回到新内容
+Ctrl-b [   进入滚动/copy-mode
+j / k      向下 / 向上滚动一行
+u / d      向上 / 向下滚动半屏，不需要 PageUp/PageDown
+g / G      到历史顶部 / 底部
+q / Esc    退出滚动/copy-mode
+```
+
+这些提示也会显示在 ccs tmux 状态栏里。
+
+默认不启用 tmux mouse，因为它会拦截 Claude Code 的鼠标/焦点行为，可能导致输入框不自动获得焦点。如果你更想用鼠标滚轮，可以显式开启：
+
+```bash
+export CCS_TMUX_MOUSE=1
+```
+
+开启后重新 `ccs attach <name>` 生效。
+
+如果老用户仍然想显示 tmux 侧边状态栏，可以显式打开：
+
+```bash
+export CCS_TMUX_SIDEBAR=1
+```
+
+默认路线基于 tmux，优先保证现有用户稳定可用，并隐藏不必要的 tmux 界面。后续会并行推进 `ccsd + workbench` 最终方案，用真正的左侧可点击 session 列表和右侧嵌入终端替代 tmux 兼容层。
 
 ### 切换或重启会话
 

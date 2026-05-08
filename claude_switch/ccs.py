@@ -58,7 +58,7 @@ COMMON EXAMPLES
 SESSION MANAGEMENT
   ccs tui
       Open the interactive session dashboard.
-      When attached to a session, the left sidebar stays visible in tmux.
+      Attached sessions stay focused on the Claude terminal.
 
   ccs list
       List managed sessions.
@@ -74,6 +74,9 @@ SESSION MANAGEMENT
 
   ccs kill <name>
       Kill a managed session and remove its session settings file.
+
+  ccs monitor [name...] [--lines N]
+      Watch recent output from one or more sessions without attaching.
 
   ccs switch <name> [model]
       Restart a session. If model is provided, switch to it first.
@@ -119,10 +122,12 @@ REQUIREMENTS
   API keys are read from environment variables, for example DEEPSEEK_API_KEY.
 
 IN-SESSION KEYS
-  F2                    session/window picker
+  F2                    ccs session picker
   F3                    previous session
   F4                    next session
   F10                   detach; Claude keeps running
+  Ctrl-b s              session picker fallback
+  Ctrl-b n / Ctrl-b p   next / previous session fallback
   Ctrl-b d              detach fallback
 
 COMMAND SUMMARY
@@ -138,6 +143,7 @@ COMMAND SUMMARY
   ccs attach [name]
   ccs kill <name>
   ccs switch <name> [model]
+  ccs monitor [name...]
 """
 
 HELP_ZH = """\
@@ -176,7 +182,7 @@ ccs — 用 provider/model 运行 Claude Code 会话
 会话管理
   ccs tui
       打开交互式 session 管理界面。
-      进入会话后，左侧 sidebar 会继续显示在 tmux 里。
+      进入会话后默认保持 Claude 终端全屏。
 
   ccs list
       列出托管会话。
@@ -192,6 +198,9 @@ ccs — 用 provider/model 运行 Claude Code 会话
 
   ccs kill <name>
       删除托管会话，并清理该会话的 settings 文件。
+
+  ccs monitor [name...] [--lines N]
+      在普通命令行同时查看一个或多个 session 的最近输出，不进入 Claude。
 
   ccs switch <name> [model]
       重启会话。传 model 时先切换到该模型。
@@ -237,10 +246,12 @@ ccs 参数
   API key 只从环境变量读取，例如 DEEPSEEK_API_KEY。
 
 会话内快捷键
-  F2                    打开 session/window 选择器
+  F2                    打开 ccs session 选择器
   F3                    切到上一个 session
   F4                    切到下一个 session
   F10                   退出当前附着；Claude 继续后台运行
+  Ctrl-b s              session 选择器备用方式
+  Ctrl-b n / Ctrl-b p   下一个 / 上一个 session 备用方式
   Ctrl-b d              detach 备用方式
 
 命令摘要
@@ -256,11 +267,27 @@ ccs 参数
   ccs attach [name]
   ccs kill <name>
   ccs switch <name> [model]
+  ccs monitor [name...]
 """
 
 
 TOOLS = {"claude", "codex", "opencode"}
-MANAGEMENT = {"list", "attach", "kill", "switch", "help", "models", "providers", "model", "tui", "sidebar"}
+MANAGEMENT = {
+    "list",
+    "attach",
+    "kill",
+    "switch",
+    "help",
+    "models",
+    "providers",
+    "model",
+    "tui",
+    "sidebar",
+    "pick",
+    "select",
+    "focus",
+    "monitor",
+}
 
 
 @dataclass
@@ -314,6 +341,15 @@ def _run_management(command: str, args: list[str]) -> None:
     if command == "sidebar":
         _run_sidebar(args)
         return
+    if command == "pick":
+        _run_pick(args)
+        return
+    if command == "select":
+        _run_select(args)
+        return
+    if command == "focus":
+        _run_focus(args)
+        return
     mgr = _manager()
     try:
         if command == "list":
@@ -334,6 +370,8 @@ def _run_management(command: str, args: list[str]) -> None:
             print(f"Killed session '{args[0]}'")
         elif command == "switch":
             _run_switch(mgr, args)
+        elif command == "monitor":
+            _run_monitor(mgr, args)
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -579,41 +617,220 @@ def _run_tui(args: list[str]) -> None:
 
 
 def _run_sidebar(args: list[str]) -> None:
-    current = None
-    if args[:1] == ["--current"] and len(args) == 2:
-        current = args[1]
-    elif args:
-        raise SystemExit("ccs: usage: ccs sidebar [--current NAME]")
+    current, main_pane = _parse_sidebar_args(args)
 
     try:
         mgr = SessionManager()
         while True:
             sessions = mgr.list()
             print("\033[H\033[2J", end="")
-            print("\033[1mccs sessions\033[0m")
-            print("")
+            print("\033[1mccs\033[0m")
             if not sessions:
                 print("No sessions")
             for session in sessions:
                 marker = ">" if session.name == current else " "
-                status = "run" if session.running else "stop"
-                model = _clip(session.model, 18)
-                name = _clip(session.name, 24)
+                status = "*" if session.running else "x"
+                model = _clip(session.model, 16)
+                name = _clip(session.name, 18)
                 print(f"{marker} {name}")
-                print(f"  {model} [{status}]")
+                print(f"  {status} {model}")
             print("")
-            print("F2  picker")
-            print("F3  prev")
-            print("F4  next")
-            print("F10 detach")
-            print("Ctrl-b d detach")
+            print("F2  sessions")
+            print("F3/F4 prev/next")
+            print("F10 leave")
             sys.stdout.flush()
+            if main_pane:
+                subprocess.run(
+                    ["tmux", "select-pane", "-t", main_pane],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
             time.sleep(1)
     except KeyboardInterrupt:
         return
     except RuntimeError as exc:
         print(f"ccs sidebar: {exc}", file=sys.stderr)
         time.sleep(3)
+
+
+def _run_pick(args: list[str]) -> None:
+    if args:
+        raise SystemExit("ccs: usage: ccs pick")
+    try:
+        import curses
+    except ModuleNotFoundError:
+        raise SystemExit("ccs: curses is required for ccs pick") from None
+
+    mgr = SessionManager()
+    sessions = mgr.list()
+    if not sessions:
+        print("No ccs sessions")
+        time.sleep(1)
+        return
+
+    current = mgr.current_session_name()
+    selected = curses.wrapper(_pick_session, sessions, current)
+    if selected:
+        mgr.attach(selected)
+
+
+def _run_select(args: list[str]) -> None:
+    if len(args) != 1 or args[0] not in {"next", "prev"}:
+        raise SystemExit("ccs: usage: ccs select next|prev")
+    try:
+        SessionManager().select_relative(args[0])
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _run_focus(args: list[str]) -> None:
+    if len(args) > 1:
+        raise SystemExit("ccs: usage: ccs focus [name]")
+    try:
+        SessionManager().focus(args[0] if args else None)
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _run_monitor(mgr: SessionManager, args: list[str]) -> None:
+    names, lines, interval, once = _parse_monitor_args(args)
+    try:
+        while True:
+            sessions = mgr.list()
+            if names:
+                wanted = set(names)
+                sessions = [session for session in sessions if session.name in wanted]
+                missing = wanted - {session.name for session in sessions}
+                if missing:
+                    raise RuntimeError(f"session not found: {', '.join(sorted(missing))}")
+            print("\033[H\033[2J", end="")
+            print("ccs monitor")
+            print("Ctrl-C quit | ccs attach <name> to interact")
+            print("")
+            if not sessions:
+                print("No sessions.")
+            for session in sessions:
+                status = "running" if session.running else "stopped"
+                print(f"===== {session.name} | {session.tool} | {session.model} | {status} =====")
+                try:
+                    output = mgr.capture(session.name, lines=lines)
+                except RuntimeError as exc:
+                    output = f"[capture failed: {exc}]"
+                print(_tail_nonempty(output, lines))
+                print("")
+            sys.stdout.flush()
+            if once:
+                return
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        return
+
+
+def _parse_monitor_args(args: list[str]) -> tuple[list[str], int, float, bool]:
+    names: list[str] = []
+    lines = 30
+    interval = 2.0
+    once = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--lines":
+            lines = int(_take_value(args, i, arg))
+            i += 2
+        elif arg == "--interval":
+            interval = float(_take_value(args, i, arg))
+            i += 2
+        elif arg == "--once":
+            once = True
+            i += 1
+        elif arg.startswith("--"):
+            raise SystemExit(f"ccs: unknown monitor option: {arg}")
+        else:
+            names.append(arg)
+            i += 1
+    if lines < 1:
+        raise SystemExit("ccs: --lines must be >= 1")
+    if interval <= 0:
+        raise SystemExit("ccs: --interval must be > 0")
+    return names, lines, interval, once
+
+
+def _tail_nonempty(output: str, lines: int) -> str:
+    rows = [row.rstrip() for row in output.splitlines()]
+    while rows and not rows[-1]:
+        rows.pop()
+    return "\n".join(rows[-lines:]) if rows else ""
+
+
+def _pick_session(stdscr, sessions, current: str | None = None) -> str | None:
+    import curses
+
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+    selected = 0
+    while True:
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+        stdscr.addnstr(0, 0, "ccs sessions", width - 1, curses.A_BOLD)
+        stdscr.addnstr(1, 0, "Enter switch   * current   > cursor   q close", width - 1)
+        max_rows = max(1, height - 4)
+        start = max(0, selected - max_rows + 1)
+        visible = sessions[start : start + max_rows]
+        for offset, session in enumerate(visible):
+            index = start + offset
+            marker = _session_picker_marker(
+                is_selected=index == selected,
+                is_current=session.name == current,
+            )
+            status = "running" if session.running else "stopped"
+            text = f"{marker} {session.name}  {session.model}  {session.project_name}  {status}"
+            attr = curses.A_REVERSE if index == selected else curses.A_NORMAL
+            stdscr.addnstr(offset + 3, 0, text, width - 1, attr)
+        stdscr.refresh()
+
+        key = stdscr.getch()
+        if key in (ord("q"), ord("Q"), 27):
+            return None
+        if key in (curses.KEY_UP, ord("k")):
+            selected = max(0, selected - 1)
+        elif key in (curses.KEY_DOWN, ord("j")):
+            selected = min(len(sessions) - 1, selected + 1)
+        elif key in (10, 13, curses.KEY_ENTER):
+            return sessions[selected].name
+
+
+def _session_picker_marker(*, is_selected: bool, is_current: bool) -> str:
+    if is_selected and is_current:
+        return ">*"
+    if is_selected:
+        return "> "
+    if is_current:
+        return " *"
+    return "  "
+
+
+def _parse_sidebar_args(args: list[str]) -> tuple[str | None, str | None]:
+    current = None
+    main_pane = None
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--current":
+            current = _take_value(args, i, arg)
+            i += 2
+        elif arg == "--main-pane":
+            main_pane = _take_value(args, i, arg)
+            i += 2
+        else:
+            break
+    if i != len(args):
+        raise SystemExit("ccs: usage: ccs sidebar [--current NAME] [--main-pane PANE]")
+    return current, main_pane
 
 
 def _clip(value: str, width: int) -> str:
@@ -644,13 +861,15 @@ def _print_claude_dry_run(
         settings = SessionManager._settings_path(session_name, "claude")
     else:
         resolved = resolve_model_spec(model or "default")
+    config_dir = SessionManager._config_dir_path(session_name, "claude")
     argv = SessionManager._claude_argv(session_name, settings, passthrough)
     print(f"name: {session_name}")
     print(f"project: {project_path}")
     print("tool: claude")
     print(f"model: {resolved.canonical}")
     print(f"settings: {settings or '(default)'}")
-    print(f"command: {shlex.join(argv)}")
+    print(f"config_dir: {config_dir}")
+    print(f"command: {SessionManager._shell_command(argv, config_dir)}")
 
 
 def _validate_claude_model(model: str | None):
