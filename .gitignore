@@ -37,3 +37,7 @@ htmlcov/
 # Misc
 .ruff_cache/
 .pypirc
+
+# Claude Code project-local settings (may contain auth tokens)
+.claude/settings.json
+.claude/settings.local.json
