@@ -104,7 +104,8 @@ class CcsParseTests(unittest.TestCase):
                 command, env = _launcher_command("claude", opts, [], create=False)
 
             self.assertEqual(command, ["claude", "--name", "demo"])
-            self.assertIn("CLAUDE_CONFIG_DIR", env)
+            self.assertNotIn("CLAUDE_CONFIG_DIR", env)
+            self.assertEqual(env, {})
             self.assertFalse((Path(td) / "launcher").exists())
 
 
@@ -138,15 +139,13 @@ class SessionHelperTests(unittest.TestCase):
 
         self.assertEqual(argv, ["claude", "--name", "custom"])
 
-    def test_shell_command_isolates_claude_config_dir(self):
+    def test_shell_command_does_not_isolate_config_dir(self):
         command = SessionManager._shell_command(
             ["claude", "--name", "review"],
-            Path("/tmp/ccs-review.claude.config"),
         )
 
-        self.assertIn("exec env", command)
-        self.assertIn("CLAUDE_CONFIG_DIR=/tmp/ccs-review.claude.config", command)
-        self.assertIn("claude --name review", command)
+        self.assertNotIn("CLAUDE_CONFIG_DIR", command)
+        self.assertIn("exec claude --name review", command)
 
     def test_write_claude_settings_uses_0600_permissions(self):
         with tempfile.TemporaryDirectory() as td:
@@ -388,7 +387,7 @@ class DaemonStoreTests(unittest.TestCase):
 
         call.assert_called_once_with("daemon.ping", {})
 
-    def test_claude_adapter_injects_isolated_config_dir(self):
+    def test_claude_adapter_does_not_isolate_config_dir(self):
         with tempfile.TemporaryDirectory() as td:
             paths = CcsPaths(Path(td))
             store = SessionStore(paths)
@@ -402,8 +401,7 @@ class DaemonStoreTests(unittest.TestCase):
             prepared = get_adapter("claude").prepare(record, paths)
 
         self.assertEqual(prepared.command, ["claude", "--name", "review"])
-        self.assertIn("CLAUDE_CONFIG_DIR", prepared.env)
-        self.assertTrue(prepared.env["CLAUDE_CONFIG_DIR"].endswith(".claude"))
+        self.assertNotIn("CLAUDE_CONFIG_DIR", prepared.env)
 
     def test_codex_adapter_accepts_openai_model(self):
         with tempfile.TemporaryDirectory() as td:

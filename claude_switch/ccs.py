@@ -1044,15 +1044,13 @@ def _print_claude_dry_run(
         settings = SessionManager._settings_path(session_name, "claude")
     else:
         resolved = resolve_model_spec(model or "default")
-    config_dir = SessionManager._config_dir_path(session_name, "claude")
     argv = SessionManager._claude_argv(session_name, settings, passthrough)
     print(f"name: {session_name}")
     print(f"project: {project_path}")
     print("tool: claude")
     print(f"model: {resolved.canonical}")
     print(f"settings: {settings or '(default)'}")
-    print(f"config_dir: {config_dir}")
-    print(f"command: {SessionManager._shell_command(argv, config_dir)}")
+    print(f"command: {SessionManager._shell_command(argv)}")
 
 
 def _print_launcher_dry_run(tool: str, opts: CcsOptions, passthrough: list[str]) -> None:
@@ -1117,13 +1115,9 @@ def _launcher_claude_command(
     base = Path(os.environ.get("CCS_LAUNCHER_HOME", str(Path.home() / ".ccs" / "launcher"))).expanduser()
     session_key = opts.name or f"{SessionManager._slug(model)}-{SessionManager._slug(str(Path(opts.project).resolve()).split('/')[-1] or 'project')}"
     run_dir = base / SessionManager._slug(session_key)
-    config_dir = run_dir / "claude-config"
     if create:
         run_dir.mkdir(parents=True, exist_ok=True)
         run_dir.chmod(0o700)
-        config_dir.mkdir(exist_ok=True)
-        config_dir.chmod(0o700)
-    env["CLAUDE_CONFIG_DIR"] = str(config_dir)
     if resolved.actual_model != "default":
         validate_runtime_key(resolved)
         settings = run_dir / "claude.settings.json"

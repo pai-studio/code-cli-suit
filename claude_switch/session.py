@@ -205,8 +205,6 @@ class SessionManager:
             settings = self._settings_path(session_name, "claude")
             self._write_claude_settings(model or "default", settings)
 
-        config_dir = self._config_dir_path(session_name, "claude")
-        self._ensure_config_dir(config_dir)
         argv = self._claude_argv(session_name, settings, passthrough)
         if dry_run:
             print(f"name: {session_name}")
@@ -214,8 +212,7 @@ class SessionManager:
             print(f"tool: claude")
             print(f"model: {resolved_model.canonical}")
             print(f"settings: {settings or '(default)'}")
-            print(f"config_dir: {config_dir}")
-            print(f"command: {self._shell_command(argv, config_dir)}")
+            print(f"command: {self._shell_command(argv)}")
             return None
 
         self._tmux(
@@ -226,7 +223,7 @@ class SessionManager:
             session_name,
             "-c",
             project_path,
-            self._shell_command(argv, config_dir),
+            self._shell_command(argv),
         )
         target = f"{self.TMUX_SESSION}:{session_name}"
         main_pane = self._tmux("display-message", "-p", "-t", target, "#{pane_id}")
@@ -236,7 +233,7 @@ class SessionManager:
             model=resolved_model.canonical,
             project=project_path,
             settings=str(settings) if settings else "",
-            config_dir=str(config_dir),
+            config_dir="",
             argv=passthrough,
             main_pane=main_pane,
         )
@@ -284,8 +281,6 @@ class SessionManager:
             next_settings = self._settings_path(name, "claude")
             self._write_claude_settings(next_model, next_settings)
 
-        config_dir = Path(session.config_dir) if session.config_dir else self._config_dir_path(name, "claude")
-        self._ensure_config_dir(config_dir)
         argv = self._claude_argv(name, next_settings, next_argv)
         if dry_run:
             print(f"name: {name}")
@@ -293,8 +288,7 @@ class SessionManager:
             print("tool: claude")
             print(f"model: {resolved_model.canonical}")
             print(f"settings: {next_settings or '(default)'}")
-            print(f"config_dir: {config_dir}")
-            print(f"command: {self._shell_command(argv, config_dir)}")
+            print(f"command: {self._shell_command(argv)}")
             return None
 
         target = f"{self.TMUX_SESSION}:{session.index}"
@@ -306,7 +300,7 @@ class SessionManager:
             target,
             "-c",
             session.project,
-            self._shell_command(argv, config_dir),
+            self._shell_command(argv),
         )
         main_pane = self._tmux("display-message", "-p", "-t", target, "#{pane_id}")
         self._set_window_metadata(
@@ -315,7 +309,7 @@ class SessionManager:
             model=resolved_model.canonical,
             project=session.project,
             settings=str(next_settings) if next_settings else "",
-            config_dir=str(config_dir),
+            config_dir="",
             argv=next_argv,
             main_pane=main_pane,
         )
@@ -682,8 +676,8 @@ class SessionManager:
         return argv
 
     @staticmethod
-    def _shell_command(argv: list[str], config_dir: Path) -> str:
-        return shlex.join(["exec", "env", f"CLAUDE_CONFIG_DIR={config_dir}", *argv])
+    def _shell_command(argv: list[str], config_dir: Path | None = None) -> str:
+        return shlex.join(["exec", *argv])
 
     @staticmethod
     def _state_dir() -> Path:

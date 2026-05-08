@@ -26,10 +26,6 @@ class ClaudeAdapter:
             )
             settings.chmod(0o600)
             argv.extend(["--settings", str(settings)])
-        config_dir = paths.configs / f"{session.id}.claude"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        config_dir.chmod(0o700)
-        env["CLAUDE_CONFIG_DIR"] = str(config_dir)
         if "--name" not in session.argv and "-n" not in session.argv:
             argv.extend(["--name", session.name])
         argv.extend(session.argv)
