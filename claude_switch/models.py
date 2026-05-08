@@ -20,6 +20,7 @@ PROVIDER_ALIASES: dict[str, str] = {
     "anthropic": "anthropic",
     "ds": "deepseek",
     "deepseek": "deepseek",
+    "moonshot": "moonshot",
     "or": "openrouter",
     "openrouter": "openrouter",
     "openai": "openai",
@@ -31,6 +32,7 @@ PROVIDER_ALIASES: dict[str, str] = {
 PREFERRED_PROVIDER_ALIAS = {
     "anthropic": "an",
     "deepseek": "ds",
+    "moonshot": "moonshot",
     "openrouter": "or",
     "openai": "openai",
     "minimax": "mm",
@@ -158,6 +160,7 @@ def _builtin_model_specs() -> list[ModelSpec]:
         ModelSpec("deepseek", "pro", "deepseek-v4-pro[1m]", ("ds/pro", "deepseek/pro"), ("deepseek-pro",)),
         ModelSpec("openai", "gpt-5", "gpt-5", ("openai/gpt-5", "oa/gpt-5"), ()),
         ModelSpec("minimax", "m2.7", "minimax-m2.7", ("mm/m2.7", "minimax/m2.7"), ("minimax-m2.7",)),
+        ModelSpec("moonshot", "kimi-2.6", "kimi-k2.6", ("moonshot/kimi-2.6",), ()),
         ModelSpec(
             "openrouter",
             "kimi-k2.6",

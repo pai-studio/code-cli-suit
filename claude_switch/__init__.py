@@ -141,6 +141,13 @@ PROVIDER_PRESETS = {
         "auth_mode": "bearer",
         "desc": "MiniMax Anthropic-compatible 端点",
     },
+    "moonshot": {
+        "name": "Moonshot AI (Kimi)",
+        "base_url": "https://api.moonshot.cn/v1",
+        "env_key": "MOONSHOT_API_KEY",
+        "auth_mode": "bearer",
+        "desc": "Moonshot AI API, 官方 Kimi 模型",
+    },
     "openrouter": {
         "name": "OpenRouter",
         "base_url": "https://openrouter.ai/api",

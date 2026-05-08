@@ -1096,7 +1096,8 @@ def _launcher_command(
     if tool == "codex":
         return ["codex", "--model", resolved.actual_model, *passthrough], {}
     if tool == "opencode":
-        return ["opencode", "--model", resolved.actual_model, *passthrough], {}
+        model_str = f"{resolved.provider}/{resolved.actual_model}"
+        return ["opencode", "--model", model_str, *passthrough], {}
     raise SystemExit(f"ccs: unsupported tool '{tool}'")
 
 
