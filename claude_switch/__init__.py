@@ -164,7 +164,7 @@ BUILTIN = {
     "best":     {"model": "opus",     "provider": "anthropic", "aliases": {"haiku": "haiku", "sonnet": "sonnet", "opus": "opus"}},
     "default":  {"model": "default",  "provider": "anthropic", "aliases": {"haiku": "haiku", "sonnet": "sonnet", "opus": "opus"}},
     "opusplan": {"model": "opusplan", "provider": "anthropic", "aliases": {"haiku": "haiku", "sonnet": "sonnet", "opus": "opus"}},
-    "deepseek-pro":    {"model": "deepseek-v4-pro",    "provider": "deepseek",   "aliases": {"haiku": "deepseek-v4-pro",    "sonnet": "deepseek-v4-pro",    "opus": "deepseek-v4-pro"}},
+    "deepseek-pro":    {"model": "deepseek-v4-pro[1m]", "provider": "deepseek",   "aliases": {"haiku": "deepseek-v4-flash",  "sonnet": "deepseek-v4-pro[1m]", "opus": "deepseek-v4-pro[1m]"}, "subagent_model": "deepseek-v4-flash", "effort_level": "max"},
     "deepseek-flash":  {"model": "deepseek-v4-flash",  "provider": "deepseek",   "aliases": {"haiku": "deepseek-v4-flash",  "sonnet": "deepseek-v4-flash",  "opus": "deepseek-v4-flash"}},
     "minimax-m2.7":    {"model": "minimax-m2.7",       "provider": "minimax",    "aliases": {"haiku": "minimax-m2.7",       "sonnet": "minimax-m2.7",       "opus": "minimax-m2.7"}},
     "openrouter/glm-5":          {"model": "z-ai/glm-5",            "provider": "openrouter", "aliases": {"haiku": "z-ai/glm-5",            "sonnet": "z-ai/glm-5",            "opus": "z-ai/glm-5"}},
@@ -307,6 +307,11 @@ def profile_to_settings(profile: dict) -> dict:
     if aliases.get("haiku"):
         env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = aliases["haiku"]
 
+    if profile.get("subagent_model"):
+        env["CLAUDE_CODE_SUBAGENT_MODEL"] = profile["subagent_model"]
+    if profile.get("effort_level"):
+        env["CLAUDE_CODE_EFFORT_LEVEL"] = profile["effort_level"]
+
     s = profile.get("settings", {})
     if s.get("alwaysThinkingEnabled") is not None:
         result["alwaysThinkingEnabled"] = s["alwaysThinkingEnabled"]
@@ -332,6 +337,7 @@ def apply_profile(settings_path: Path, profile: dict) -> None:
     cur.update(data)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(cur, indent=2) + "\n")
+    settings_path.chmod(0o600)
 
 
 def normalize_profile(v) -> dict:

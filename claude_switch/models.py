@@ -155,7 +155,7 @@ def _builtin_model_specs() -> list[ModelSpec]:
         ModelSpec("anthropic", "default", "default", ("default", "an/default", "anthropic/default"), ("default",)),
         ModelSpec("anthropic", "opusplan", "opusplan", ("opusplan", "an/opusplan", "anthropic/opusplan"), ("opusplan",)),
         ModelSpec("deepseek", "flash", "deepseek-v4-flash", ("ds/flash", "deepseek/flash"), ("deepseek-flash",)),
-        ModelSpec("deepseek", "pro", "deepseek-v4-pro", ("ds/pro", "deepseek/pro"), ("deepseek-pro",)),
+        ModelSpec("deepseek", "pro", "deepseek-v4-pro[1m]", ("ds/pro", "deepseek/pro"), ("deepseek-pro",)),
         ModelSpec("openai", "gpt-5", "gpt-5", ("openai/gpt-5", "oa/gpt-5"), ()),
         ModelSpec("minimax", "m2.7", "minimax-m2.7", ("mm/m2.7", "minimax/m2.7"), ("minimax-m2.7",)),
         ModelSpec(
