@@ -1,6 +1,18 @@
 # ccs
 
-`ccs` 用 tmux 管理多个 Claude Code 会话，并允许每个会话使用不同的 `provider/model`。
+`ccs` 管理多个代码工具会话，并允许每个会话使用不同的 `provider/model`。
+
+当前同时维护两套 backend：
+
+- 默认新路线：`ccsd + panel`。运行 `ccs` 打开只读观察面板，session 由后台 daemon 持有，退出 panel 后继续运行。
+- 兼容旧路线：`tmux backend`。只通过 `ccs tmux ...` 使用，保证旧用户可继续工作。
+
+不要混用同一个 session：
+
+- daemon session 用 `ccs new/list/attach/switch/kill/monitor` 管理。
+- tmux session 用 `ccs tmux list/attach/switch/kill/monitor` 管理。
+- 顶层 `ccs claude --cc-model ...` 是轻量 launcher：不创建 daemon session、不进 tmux、不打开 UI，只注入模型配置后运行原始工具。
+- 旧 tmux 创建方式是 `ccs tmux claude --cc-model ...`。
 
 `claude-switch` 仍然保留为兼容命令；日常使用优先使用 `ccs`。
 
@@ -14,7 +26,17 @@ pip install -e . --no-build-isolation
 ccs providers
 ccs models
 
-# 用 DeepSeek Flash 启动一个托管 Claude 会话
+# 打开只读观察面板
+ccs
+
+# 用 daemon backend 后台新建一个 Claude 会话
+ccs new claude ds/flash --permission-mode acceptEdits
+
+# 用 daemon backend 新建 Codex/OpenCode 会话
+ccs new codex openai/gpt-5
+ccs new opencode or/kimi-k2.6
+
+# 轻量 launcher：用 DeepSeek Flash 直接启动原始 Claude UI
 ccs claude --cc-model ds/flash
 
 # 用 Sonnet 启动，并把参数原样传给 Claude
@@ -23,7 +45,7 @@ ccs claude --cc-model an/sonnet --permission-mode acceptEdits
 # 查看托管会话
 ccs list
 
-# 打开 TUI 管理 session
+# 打开旧 tmux TUI 管理 session
 ccs tui
 
 # 用新模型重启已有会话
@@ -33,9 +55,46 @@ ccs switch api-review ds/pro
 ccs attach
 ```
 
-## ccs 的心智模型
+## 两套 backend
 
-`ccs claude ...` 看起来应该像原始 `claude ...`。
+### 默认 launcher + daemon/panel backend
+
+主路径：
+
+```bash
+ccs
+ccs new claude ds/flash --permission-mode acceptEdits
+ccs list
+ccs attach api-review
+ccs switch api-review ds/pro
+ccs kill api-review
+```
+
+语义：
+
+- `ccs` 启动或连接 `ccsd`，打开只读 panel。
+- `ccs claude --cc-model ...` 是 launcher，保留原始 Claude UI，不创建 managed session。
+- `ccs new ...` 才创建 daemon managed session。
+- `ccs` / `ccs panel` 是只读 observer，退出后 session 继续运行。
+- `ccs attach <name>` 在新路线里是打开只读 panel 并选中 session。
+
+### 兼容 tmux backend
+
+旧路线显式入口：
+
+```bash
+ccs tmux list
+ccs tmux attach api-review
+ccs tmux switch api-review ds/pro
+ccs tmux kill api-review
+ccs tmux claude --cc-model ds/flash
+```
+
+`ccs claude --cc-model ...` 顶层入口属于轻量 launcher。旧 tmux 入口必须显式写成 `ccs tmux claude --cc-model ...`。
+
+## `ccs claude` 的心智模型
+
+`ccs claude ...` 看起来应该像原始 `claude ...`，这是兼容旧路线。
 
 区别只有一个：`ccs` 只解析 `--cc-*` 参数，其余参数全部传给 Claude。
 
@@ -43,7 +102,7 @@ ccs attach
 # 原始 Claude help，不创建会话
 ccs claude --help
 
-# 创建托管会话；--permission-mode 是 Claude 原始参数
+# 轻量启动；--permission-mode 是 Claude 原始参数
 ccs claude --cc-model ds/flash --permission-mode acceptEdits
 ```
 
@@ -62,30 +121,38 @@ ccs claude --cc-model ds/flash --permission-mode acceptEdits
 
 ## 常用命令
 
-### 启动会话
+### 启动 daemon session
 
 ```bash
 # 自动生成会话名，项目目录为当前目录
-ccs claude --cc-model ds/flash
+ccs new claude ds/flash
 
 # 指定会话名
-ccs claude --cc-model ds/pro --cc-name api-review
+ccs new claude ds/pro --cc-name api-review
 
 # 指定项目目录
-ccs claude --cc-model or/kimi-k2.6 --cc-project ~/work/app
+ccs new claude or/kimi-k2.6 --cc-project ~/work/app
 
-# 创建后不自动进入
-ccs claude --cc-model an/sonnet --cc-no-attach
+# 创建后台 session，不自动打开 UI
+ccs new claude an/sonnet --cc-no-attach
+
+# 原始工具参数直接跟在后面
+ccs new claude ds/flash --permission-mode acceptEdits
+ccs new codex openai/gpt-5
+ccs new opencode or/kimi-k2.6
+```
+
+### 轻量启动原始工具
+
+```bash
+# 直接运行原始 Claude UI，不创建 managed session
+ccs claude --cc-model ds/flash
+
+# 指定项目目录和模型配置
+ccs claude --cc-model or/kimi-k2.6 --cc-project ~/work/app
 
 # 预览将执行的命令，不创建会话
 ccs claude --cc-model ds/flash --cc-dry-run
-```
-
-如果 `--cc-name` 指向已有会话，`ccs` 会更新并重启该会话：
-
-```bash
-ccs claude --cc-name api-review --cc-model ds/pro
-ccs claude --cc-name api-review --cc-model ds/pro --permission-mode acceptEdits
 ```
 
 ### 传递 Claude 原始参数
@@ -98,11 +165,11 @@ ccs claude --cc-model an/sonnet --dangerously-skip-permissions
 
 `--permission-mode`、`--add-dir`、`--dangerously-skip-permissions` 都属于 Claude，`ccs` 不解析。
 
-### 管理会话
+### 管理 daemon 会话
 
 ```bash
-# 打开交互式 session 管理界面
-ccs tui
+# 打开只读观察面板
+ccs
 
 # 列出所有托管会话
 ccs list
@@ -124,21 +191,47 @@ ccs monitor
 ccs monitor api-review ui-fix --lines 80
 ```
 
-低负担默认路线是：用 `ccs claude ...` 创建/进入会话，用 `ccs list/attach/switch/kill/monitor` 在命令行管理会话。tmux 内部只承担隔离运行，不要求用户理解 pane/window。
+低负担默认路线是：用 `ccs claude --cc-model ...` 直接运行原始工具；多 session 时用 `ccs new/list/attach/switch/kill/monitor` 管理 daemon session。
 
-同一个项目可以同时开多个独立终端窗口：
+Panel 焦点和滚动：
 
-```bash
-ccs claude --cc-name code --cc-model ds/flash
-ccs claude --cc-name review --cc-model an/sonnet --cc-no-attach
-
-# 在另一个终端窗口进入 review
-ccs attach review
+```text
+F2 / Tab         在左侧 session 列表和右侧输出区域之间切换焦点
+鼠标点击 session 切换右侧终端，并自动回到终端焦点
+Fn+↑ / PageUp    向上滚动右侧终端 snapshot
+Fn+↓ / PageDown  向下滚动，直到回到底部
+输入任何字符      自动回到底部并发送给当前 session
+F10 / q          离开 panel，session 继续运行
 ```
 
-`ccs attach <name>` 会为每个会话使用独立的 tmux view session，避免两个终端 attach 到同一个 tmux session 后互相同步当前窗口和输入。
+当前 panel 使用 daemon 的 terminal screen snapshot 渲染，避免 raw scrollback 重复刷屏。它默认只读，不是完整终端复刻；如果需要原始交互 UI，使用 `ccs claude --cc-model ...` 或 `ccs tmux ...`。
 
-### TUI 快捷键
+### 管理 tmux 会话
+
+```bash
+ccs tmux list
+ccs tmux attach api-review
+ccs tmux switch api-review ds/pro
+ccs tmux kill api-review
+ccs tmux monitor api-review --lines 80
+ccs tui
+```
+
+tmux backend 只承担兼容和稳定运行，不要求新用户理解 pane/window。
+
+tmux backend 中，同一个项目可以同时开多个独立终端窗口：
+
+```bash
+ccs tmux claude --cc-name code --cc-model ds/flash
+ccs tmux claude --cc-name review --cc-model an/sonnet --cc-no-attach
+
+# 在另一个终端窗口进入 review
+ccs tmux attach review
+```
+
+`ccs tmux attach <name>` 会为每个会话使用独立的 tmux view session，避免两个终端 attach 到同一个 tmux session 后互相同步当前窗口和输入。
+
+### tmux TUI 快捷键
 
 ```text
 Enter  attach 当前 session
@@ -189,7 +282,7 @@ q / Esc    退出滚动/copy-mode
 export CCS_TMUX_MOUSE=1
 ```
 
-开启后重新 `ccs attach <name>` 生效。
+开启后重新 `ccs tmux attach <name>` 生效。
 
 如果老用户仍然想显示 tmux 侧边状态栏，可以显式打开：
 
@@ -197,7 +290,7 @@ export CCS_TMUX_MOUSE=1
 export CCS_TMUX_SIDEBAR=1
 ```
 
-默认路线基于 tmux，优先保证现有用户稳定可用，并隐藏不必要的 tmux 界面。后续会并行推进 `ccsd + workbench` 最终方案，用真正的左侧可点击 session 列表和右侧嵌入终端替代 tmux 兼容层。
+tmux backend 是 legacy 兼容路线，优先保证旧用户稳定可用，并隐藏不必要的 tmux 界面。
 
 ### 切换或重启会话
 
@@ -211,17 +304,8 @@ ccs switch api-review
 # 切回默认配置
 ccs switch api-review default
 
-# 如果会话不存在，允许创建
-ccs switch api-review ds/pro --create
-
-# 创建时指定项目目录
-ccs switch api-review ds/pro --create --cc-project ~/work/app
-```
-
-`switch` 是管理命令，不透传 Claude 原始参数。需要同时指定 Claude 参数时，使用：
-
-```bash
-ccs claude --cc-name api-review --cc-model ds/pro --permission-mode acceptEdits
+# daemon session 不存在时，用 new 创建
+ccs new claude ds/pro --cc-name api-review --permission-mode acceptEdits
 ```
 
 ### 模型和 provider
@@ -275,11 +359,11 @@ ccs models add or/my-model provider-author/real-model-id
 
 | 参数 | 说明 |
 | --- | --- |
-| `--cc-model <model>` | 使用 `provider/model` 创建托管会话 |
-| `--cc-name <name>` | 指定会话名，不填则自动生成 |
+| `--cc-model <model>` | 为 launcher 或 managed session 指定 `provider/model` |
+| `--cc-name <name>` | launcher 中用于隔离配置；managed session 中指定会话名 |
 | `--cc-project <dir>` | 指定项目目录，默认当前目录 |
-| `--cc-no-attach` | 创建后不自动 attach |
-| `--cc-dry-run` | 打印生成的命令和配置路径，不创建会话 |
+| `--cc-no-attach` | 兼容参数；`ccs new` 默认就不打开 UI |
+| `--cc-dry-run` | 打印生成的命令和配置路径，不执行 |
 
 ## 会话隔离
 

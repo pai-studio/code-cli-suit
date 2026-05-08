@@ -1,8 +1,54 @@
-# PLAN-006: ccs 最终工作台方案
+# PLAN-006: ccs 三层会话方案
 
 > 日期: 2026-05-08
-> 状态: 设计中
-> 目标: 一步到位实现低负担、多工具、多模型、多会话的可点击工作台
+> 状态: 实施中
+> 目标: 低负担模型启动 + 可托管多会话 + 独立观察面板
+
+## 0. 当前决策
+
+最终用户接口分三层，避免混用：
+
+```text
+launcher
+  ccs claude --cc-model ds/flash [claude args...]
+  ccs codex --cc-model openai/gpt-5 [codex args...]
+  ccs opencode --cc-model or/kimi-k2.6 [opencode args...]
+
+managed session
+  ccs new claude ds/flash --cc-name code [claude args...]
+  ccs list
+  ccs switch code ds/pro
+  ccs restart code
+  ccs kill code
+
+observer
+  ccs monitor [name...]
+  ccs panel
+  ccs web
+
+legacy tmux
+  ccs tmux claude --cc-model ds/flash
+  ccs tmux list
+  ccs tmux attach code
+```
+
+边界：
+
+- `ccs claude --cc-model ...` 是轻量 launcher：只注入模型配置并 `exec` 原始 Claude，不创建 daemon session，不进 tmux，不打开 UI。
+- `ccs new ...` 才创建 daemon managed session。
+- `ccs list/switch/restart/kill/monitor/panel` 只管理 daemon session。
+- `ccs tmux ...` 只管理 legacy tmux session。
+- 不在一个列表里混合 daemon/tmux/launcher session。
+- observer 默认只读；不把 Claude/Codex/OpenCode 的完整 TUI 嵌入 Textual 并宣称等价。
+- 如果需要原始工具 UI，使用 launcher 或 `ccs tmux ...`。
+
+原因：
+
+- 嵌入 Claude Code TUI 会改变 ANSI 渲染、滚动、复制、鼠标和焦点行为。
+- 轻量用户最需要的是“切模型后运行原始工具”，不是被迫进入 session 管理器。
+- 多 session 管理需要 daemon，但这应该由显式 `ccs new` 触发。
+
+后续章节保留了早期 workbench 方案的设计记录；实际实施以本节为准。
 
 ## 1. 背景
 
@@ -628,6 +674,28 @@ ccs tmux claude --cc-model ds/flash
 ```
 
 ## 12. 实施计划
+
+### 当前落地状态
+
+已经开始同时维护两条路线：
+
+- 新路线：`ccsd + workbench`
+- 旧路线：tmux backend
+
+当前实现选择“不强制共享代码”：
+
+- daemon/workbench 代码独立放在主包：
+  - `claude_switch/protocol.py`
+  - `claude_switch/store.py`
+  - `claude_switch/daemon.py`
+  - `claude_switch/workbench.py`
+  - `claude_switch/adapters/`
+- tmux 代码继续保留在 `claude_switch/session.py` 和 `claude_switch/tui.py`。
+- `ccs`、`ccs new`、`ccs claude --cc-model`、`ccs list`、`ccs attach`、`ccs switch`、`ccs kill` 走 daemon/workbench。
+- `ccs tmux ...` 显式进入旧 tmux backend。
+- 旧 tmux 创建入口改为 `ccs tmux claude --cc-model ...`，避免创建在 tmux、管理却查 daemon 的混用问题。
+
+第一版 workbench 不直接复用 `labs/b2-pty-tui` 的 widget。daemon 内部使用 pyte 维护 terminal screen/history，workbench 只读取 screen snapshot 并做本地滚动/focus 管理。
 
 ### Phase 0: 优化并稳定当前 tmux 方案
 

@@ -13,6 +13,8 @@ from unittest.mock import patch
 from claude_switch.ccs import (
     HELP,
     HELP_ZH,
+    CcsOptions,
+    _launcher_command,
     _parse_cc_options,
     _parse_monitor_args,
     _parse_sidebar_args,
@@ -21,8 +23,12 @@ from claude_switch.ccs import (
     _tail_nonempty,
 )
 from claude_switch.models import add_model_mapping, list_providers, resolve_model_spec
+from claude_switch.protocol import CcsClient
 from claude_switch.session import CodeSession, SessionManager
+from claude_switch.store import CcsPaths, SessionStore
 from claude_switch.tui import CcsTuiApp, DEFAULT_TUI_MODEL, parse_new_session_request
+from claude_switch.adapters import get_adapter
+from claude_switch.daemon import _screen_lines
 
 
 class CcsParseTests(unittest.TestCase):
@@ -49,6 +55,8 @@ class CcsParseTests(unittest.TestCase):
     def test_help_mentions_tui(self):
         self.assertIn("ccs tui", HELP)
         self.assertIn("ccs tui", HELP_ZH)
+        self.assertIn("ccs new <tool> <model>", HELP)
+        self.assertIn("ccs tmux", HELP)
 
     def test_tui_rejects_extra_args(self):
         with self.assertRaises(SystemExit):
@@ -78,6 +86,16 @@ class CcsParseTests(unittest.TestCase):
 
     def test_tail_nonempty_trims_blank_tail(self):
         self.assertEqual(_tail_nonempty("a\nb\n\n", 1), "b")
+
+    def test_launcher_dry_run_does_not_create_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            opts = CcsOptions(model="default", name="demo", project=".")
+            with patch.dict(os.environ, {"CCS_LAUNCHER_HOME": str(Path(td) / "launcher")}, clear=False):
+                command, env = _launcher_command("claude", opts, [], create=False)
+
+            self.assertEqual(command, ["claude", "--name", "demo"])
+            self.assertIn("CLAUDE_CONFIG_DIR", env)
+            self.assertFalse((Path(td) / "launcher").exists())
 
 
 class SessionHelperTests(unittest.TestCase):
@@ -305,6 +323,12 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertEqual(resolved.provider, "anthropic")
         self.assertEqual(resolved.actual_model, "sonnet")
 
+    def test_resolves_openai_model_for_codex_adapter(self):
+        resolved = resolve_model_spec("openai/gpt-5")
+
+        self.assertEqual(resolved.provider, "openai")
+        self.assertEqual(resolved.actual_model, "gpt-5")
+
     def test_resolves_openrouter_short_model_to_actual_author_model(self):
         resolved = resolve_model_spec("or/kimi-k2.6")
 
@@ -327,6 +351,73 @@ class ModelRegistryTests(unittest.TestCase):
             data = json.loads(path.read_text())
             self.assertEqual(resolved.actual_model, "qwen/qwen3-coder")
             self.assertEqual(data, {"models": {"or/qwen3-coder": "qwen/qwen3-coder"}})
+
+
+class DaemonStoreTests(unittest.TestCase):
+    def test_store_creates_auto_name_without_secret_env(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = SessionStore(CcsPaths(Path(td)))
+            record = store.make_record(
+                tool="claude",
+                model="ds/flash",
+                project=".",
+                argv=["--permission-mode", "acceptEdits"],
+            )
+            store.upsert(record)
+            loaded = store.get(record.name)
+
+        self.assertIsNotNone(loaded)
+        self.assertTrue(record.name.startswith("claude-ds-flash-"))
+        self.assertEqual(record.env, {})
+        self.assertEqual(record.argv, ["--permission-mode", "acceptEdits"])
+
+    def test_client_ensure_daemon_returns_when_ping_succeeds(self):
+        client = CcsClient(CcsPaths(Path("/tmp/ccs-test")))
+        with patch.object(client, "call", return_value={"pid": 1}) as call:
+            client.ensure_daemon()
+
+        call.assert_called_once_with("daemon.ping", {})
+
+    def test_claude_adapter_injects_isolated_config_dir(self):
+        with tempfile.TemporaryDirectory() as td:
+            paths = CcsPaths(Path(td))
+            store = SessionStore(paths)
+            record = store.make_record(
+                tool="claude",
+                model="default",
+                project=".",
+                argv=[],
+                name="review",
+            )
+            prepared = get_adapter("claude").prepare(record, paths)
+
+        self.assertEqual(prepared.command, ["claude", "--name", "review"])
+        self.assertIn("CLAUDE_CONFIG_DIR", prepared.env)
+        self.assertTrue(prepared.env["CLAUDE_CONFIG_DIR"].endswith(".claude"))
+
+    def test_codex_adapter_accepts_openai_model(self):
+        with tempfile.TemporaryDirectory() as td:
+            paths = CcsPaths(Path(td))
+            store = SessionStore(paths)
+            record = store.make_record(
+                tool="codex",
+                model="openai/gpt-5",
+                project=".",
+                argv=["--help"],
+                name="codex-review",
+            )
+            prepared = get_adapter("codex").prepare(record, paths)
+
+        self.assertEqual(prepared.command, ["codex", "--model", "gpt-5", "--help"])
+
+    def test_pyte_screen_lines_show_current_screen_without_repaint_log(self):
+        import pyte
+
+        screen = pyte.HistoryScreen(10, 3, history=5)
+        stream = pyte.Stream(screen)
+        stream.feed("\n".join(str(i) for i in range(10)))
+
+        self.assertEqual(_screen_lines(screen, 4), ["      6", "       7", "        8", "         9"])
 
 
 class TuiHelperTests(unittest.TestCase):

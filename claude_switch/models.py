@@ -22,6 +22,8 @@ PROVIDER_ALIASES: dict[str, str] = {
     "deepseek": "deepseek",
     "or": "openrouter",
     "openrouter": "openrouter",
+    "openai": "openai",
+    "oa": "openai",
     "mm": "minimax",
     "minimax": "minimax",
 }
@@ -30,6 +32,7 @@ PREFERRED_PROVIDER_ALIAS = {
     "anthropic": "an",
     "deepseek": "ds",
     "openrouter": "or",
+    "openai": "openai",
     "minimax": "mm",
 }
 
@@ -153,6 +156,7 @@ def _builtin_model_specs() -> list[ModelSpec]:
         ModelSpec("anthropic", "opusplan", "opusplan", ("opusplan", "an/opusplan", "anthropic/opusplan"), ("opusplan",)),
         ModelSpec("deepseek", "flash", "deepseek-v4-flash", ("ds/flash", "deepseek/flash"), ("deepseek-flash",)),
         ModelSpec("deepseek", "pro", "deepseek-v4-pro", ("ds/pro", "deepseek/pro"), ("deepseek-pro",)),
+        ModelSpec("openai", "gpt-5", "gpt-5", ("openai/gpt-5", "oa/gpt-5"), ()),
         ModelSpec("minimax", "m2.7", "minimax-m2.7", ("mm/m2.7", "minimax/m2.7"), ("minimax-m2.7",)),
         ModelSpec(
             "openrouter",

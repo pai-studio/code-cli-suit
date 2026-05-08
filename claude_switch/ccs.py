@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import shlex
@@ -20,12 +21,16 @@ from .models import (
     validate_runtime_key,
 )
 from .session import SessionManager
+from .protocol import CcsClient, RpcError
 
 
 HELP = """\
 ccs — run Claude Code sessions with provider/model
 
 QUICK START
+  ccs
+      Open the read-only session panel. Sessions keep running after you leave.
+
   ccs models
       List built-in provider/model shortcuts.
 
@@ -36,13 +41,16 @@ QUICK START
       Start Claude Code in the current directory with DeepSeek Flash.
 
   ccs claude --cc-model sonnet --permission-mode acceptEdits
-      Start a managed Claude session and pass --permission-mode to Claude itself.
+      Start the original Claude UI with a model config and pass --permission-mode to Claude itself.
 
   ccs claude --help
       Show the original Claude help. If no --cc-* option is present, ccs simply
       forwards all arguments to the original tool.
 
 COMMON EXAMPLES
+  ccs
+  ccs new claude ds/flash --permission-mode acceptEdits
+  ccs attach api-review
   ccs providers
   ccs models
   ccs tui
@@ -50,39 +58,59 @@ COMMON EXAMPLES
   ccs claude --cc-model ds/flash
   ccs claude --cc-model ds/pro --cc-name api-review
   ccs claude --cc-model or/kimi-k2.6 --cc-project ~/work/app
-  ccs claude --cc-model an/sonnet --cc-no-attach
+  ccs new claude an/sonnet --cc-no-attach
   ccs claude --cc-model ds/flash --cc-dry-run
   ccs claude --cc-model sonnet --permission-mode acceptEdits --add-dir ../shared
   ccs models add or/qwen3-coder qwen/qwen3-coder
 
 SESSION MANAGEMENT
-  ccs tui
-      Open the interactive session dashboard.
-      Attached sessions stay focused on the Claude terminal.
+  ccs
+      Open the read-only session panel.
 
-  ccs list
-      List managed sessions.
-
-  ccs list --json
-      Print managed sessions as JSON.
-
-  ccs attach
-      Attach to the most recent managed session.
+  ccs new <tool> <model> [tool args...]
+      Create a daemon-backed session without opening UI. Tools: claude, codex, opencode.
 
   ccs attach <name>
-      Attach to a named session.
+      Open the read-only panel and select a named daemon-backed session.
+
+  ccs panel
+      Open the read-only session panel.
+
+  ccs tmux ...
+      Use the legacy tmux backend explicitly.
+
+  ccs list
+      List daemon-backed sessions.
+
+  ccs list --json
+      Print daemon-backed sessions as JSON.
+
+  ccs attach
+      Open the read-only panel.
+
+  ccs attach <name>
+      Open the read-only panel and select a named session.
 
   ccs kill <name>
-      Kill a managed session and remove its session settings file.
+      Kill a daemon-backed session.
 
   ccs monitor [name...] [--lines N]
       Watch recent output from one or more sessions without attaching.
 
+  ccs workbench
+      Experimental interactive embedded terminal. Not the default path.
+
   ccs switch <name> [model]
       Restart a session. If model is provided, switch to it first.
 
-  ccs switch <name> [model] --create
-      Create the session if it does not exist.
+LEGACY TMUX BACKEND
+  ccs tmux list
+  ccs tmux attach <name>
+  ccs tmux switch <name> [model]
+  ccs tmux kill <name>
+  ccs tmux claude --cc-model ds/flash
+  ccs tui
+      Open the legacy tmux TUI.
 
 MODEL SPEC
   an/sonnet             Anthropic Sonnet
@@ -102,8 +130,9 @@ MENTAL MODEL
   ccs only reads options whose names start with --cc-.
   Everything else after `ccs claude` belongs to Claude and is passed through.
 
-  Managed session:
+  Launcher:
     ccs claude --cc-model ds/flash --permission-mode acceptEdits
+    This is a launcher path; it does not create a managed session.
 
   Plain Claude passthrough:
     ccs claude --help
@@ -114,42 +143,48 @@ CCS OPTIONS
   --cc-model <model>     provider/model for this session
   --cc-name <name>       session name; auto-generated when omitted
   --cc-project <dir>     project directory; defaults to current directory
-  --cc-no-attach         create the session without attaching
+  --cc-no-attach         only for `ccs new` / legacy `ccs tmux claude`
   --cc-dry-run           print generated command without creating a session
 
 REQUIREMENTS
-  tmux and claude must be available on PATH for managed Claude sessions.
+  claude/codex/opencode must be available on PATH for daemon-backed sessions.
+  tmux is only required for `ccs tmux ...` legacy sessions.
   API keys are read from environment variables, for example DEEPSEEK_API_KEY.
 
-IN-SESSION KEYS
-  F2                    ccs session picker
-  F3                    previous session
-  F4                    next session
-  F10                   detach; Claude keeps running
-  Ctrl-b s              session picker fallback
-  Ctrl-b n / Ctrl-b p   next / previous session fallback
-  Ctrl-b d              detach fallback
+PANEL KEYS
+  F2 / Tab              switch focus between sidebar and terminal
+  Fn-Up / Fn-Down       scroll terminal snapshot
+  F10 / q               leave panel; sessions keep running
 
 COMMAND SUMMARY
+  ccs
+  ccs new <tool> <model> [tool args...]
   ccs claude [claude args...] [--cc-model MODEL]
+  ccs daemon start|ping|stop
   ccs models [provider]
   ccs models add <provider/model-alias> <actual-model>
   ccs models rm <provider/model-alias>
   ccs providers
   ccs model show <model>
   ccs tui
+  ccs panel
   ccs list
   ccs list --json
   ccs attach [name]
   ccs kill <name>
   ccs switch <name> [model]
   ccs monitor [name...]
+  ccs workbench
+  ccs tmux <legacy-command>
 """
 
 HELP_ZH = """\
 ccs — 用 provider/model 运行 Claude Code 会话
 
 快速开始
+  ccs
+      打开只读 session panel。退出后 session 继续运行。
+
   ccs models
       查看内置 provider/model 快捷名。
 
@@ -160,13 +195,16 @@ ccs — 用 provider/model 运行 Claude Code 会话
       在当前目录用 DeepSeek Flash 启动 Claude Code。
 
   ccs claude --cc-model sonnet --permission-mode acceptEdits
-      启动托管 Claude 会话，并把 --permission-mode 原样传给 Claude。
+      用指定模型直接启动原始 Claude UI，并把 --permission-mode 原样传给 Claude。
 
   ccs claude --help
       显示原始 Claude 帮助。只要没有 --cc-* 参数，ccs 就会把所有参数
       原样转发给原始工具。
 
 常用示例
+  ccs
+  ccs new claude ds/flash --permission-mode acceptEdits
+  ccs attach api-review
   ccs providers
   ccs models
   ccs tui
@@ -174,39 +212,59 @@ ccs — 用 provider/model 运行 Claude Code 会话
   ccs claude --cc-model ds/flash
   ccs claude --cc-model ds/pro --cc-name api-review
   ccs claude --cc-model or/kimi-k2.6 --cc-project ~/work/app
-  ccs claude --cc-model an/sonnet --cc-no-attach
+  ccs new claude an/sonnet --cc-no-attach
   ccs claude --cc-model ds/flash --cc-dry-run
   ccs claude --cc-model sonnet --permission-mode acceptEdits --add-dir ../shared
   ccs models add or/qwen3-coder qwen/qwen3-coder
 
 会话管理
-  ccs tui
-      打开交互式 session 管理界面。
-      进入会话后默认保持 Claude 终端全屏。
+  ccs
+      打开 daemon-backed 工作台。
 
-  ccs list
-      列出托管会话。
-
-  ccs list --json
-      以 JSON 格式输出托管会话。
-
-  ccs attach
-      进入最近的托管会话。
+  ccs new <tool> <model> [tool args...]
+      创建 daemon-backed session，不自动打开 UI。工具支持 claude、codex、opencode。
 
   ccs attach <name>
-      进入指定会话。
+      打开只读 panel 并选中指定 daemon-backed session。
+
+  ccs panel
+      打开只读 session panel。
+
+  ccs tmux ...
+      显式使用 legacy tmux backend。
+
+  ccs list
+      列出 daemon-backed session。
+
+  ccs list --json
+      以 JSON 格式输出 daemon-backed session。
+
+  ccs attach
+      打开只读 panel。
+
+  ccs attach <name>
+      打开只读 panel 并选中指定 session。
 
   ccs kill <name>
-      删除托管会话，并清理该会话的 settings 文件。
+      删除 daemon-backed session。
 
   ccs monitor [name...] [--lines N]
       在普通命令行同时查看一个或多个 session 的最近输出，不进入 Claude。
 
+  ccs workbench
+      实验性交互式嵌入终端。不是默认路径。
+
   ccs switch <name> [model]
       重启会话。传 model 时先切换到该模型。
 
-  ccs switch <name> [model] --create
-      如果会话不存在，则创建它。
+Legacy tmux backend
+  ccs tmux list
+  ccs tmux attach <name>
+  ccs tmux switch <name> [model]
+  ccs tmux kill <name>
+  ccs tmux claude --cc-model ds/flash
+  ccs tui
+      打开 legacy tmux TUI。
 
 模型写法
   an/sonnet             Anthropic Sonnet
@@ -226,8 +284,9 @@ OpenRouter
   ccs 只读取 --cc- 开头的参数。
   `ccs claude` 后面的其他参数都属于 Claude，会被原样传给 Claude。
 
-  托管会话:
+  Launcher:
     ccs claude --cc-model ds/flash --permission-mode acceptEdits
+    这是 launcher，不创建 managed session。
 
   原始 Claude 透传:
     ccs claude --help
@@ -238,36 +297,39 @@ ccs 参数
   --cc-model <model>     当前会话使用的 provider/model
   --cc-name <name>       会话名；不填则自动生成
   --cc-project <dir>     项目目录；默认当前目录
-  --cc-no-attach         创建会话后不自动进入
+  --cc-no-attach         仅用于 `ccs new` / legacy `ccs tmux claude`
   --cc-dry-run           打印生成的命令，不创建会话
 
 依赖
-  托管 Claude 会话需要 tmux 和 claude 在 PATH 中可用。
+  daemon-backed session 需要 claude/codex/opencode 在 PATH 中可用。
+  tmux 只用于 `ccs tmux ...` legacy session。
   API key 只从环境变量读取，例如 DEEPSEEK_API_KEY。
 
-会话内快捷键
-  F2                    打开 ccs session 选择器
-  F3                    切到上一个 session
-  F4                    切到下一个 session
-  F10                   退出当前附着；Claude 继续后台运行
-  Ctrl-b s              session 选择器备用方式
-  Ctrl-b n / Ctrl-b p   下一个 / 上一个 session 备用方式
-  Ctrl-b d              detach 备用方式
+Panel 快捷键
+  F2 / Tab              在左侧列表和右侧终端间切换焦点
+  Fn-Up / Fn-Down       滚动右侧终端 snapshot
+  F10 / q               离开 panel；session 继续运行
 
 命令摘要
+  ccs
+  ccs new <tool> <model> [tool args...]
   ccs claude [claude args...] [--cc-model MODEL]
+  ccs daemon start|ping|stop
   ccs models [provider]
   ccs models add <provider/model-alias> <actual-model>
   ccs models rm <provider/model-alias>
   ccs providers
   ccs model show <model>
   ccs tui
+  ccs panel
   ccs list
   ccs list --json
   ccs attach [name]
   ccs kill <name>
   ccs switch <name> [model]
   ccs monitor [name...]
+  ccs workbench
+  ccs tmux <legacy-command>
 """
 
 
@@ -287,6 +349,12 @@ MANAGEMENT = {
     "select",
     "focus",
     "monitor",
+    "daemon",
+    "new",
+    "restart",
+    "workbench",
+    "panel",
+    "tmux",
 }
 
 
@@ -305,8 +373,11 @@ def main(argv: list[str] | None = None) -> None:
     if args and args[0] in {"--help-zh", "help-zh"}:
         print(HELP_ZH)
         return
-    if not args or args[0] in {"-h", "--help", "help"}:
+    if args and args[0] in {"-h", "--help", "help"}:
         print(HELP)
+        return
+    if not args:
+        _run_workbench([], read_only=True)
         return
 
     head, rest = args[0], args[1:]
@@ -350,6 +421,31 @@ def _run_management(command: str, args: list[str]) -> None:
     if command == "focus":
         _run_focus(args)
         return
+    if command == "daemon":
+        _run_daemon(args)
+        return
+    if command == "new":
+        _run_new(args)
+        return
+    if command == "restart":
+        _run_restart(args)
+        return
+    if command == "workbench":
+        _run_workbench(args, read_only=False)
+        return
+    if command == "panel":
+        _run_workbench(args, read_only=True)
+        return
+    if command == "tmux":
+        _run_tmux(args)
+        return
+    if command in {"list", "attach", "kill", "switch", "monitor"}:
+        _run_daemon_management(command, args)
+        return
+    _run_tmux_management(command, args)
+
+
+def _run_tmux_management(command: str, args: list[str]) -> None:
     mgr = _manager()
     try:
         if command == "list":
@@ -377,25 +473,235 @@ def _run_management(command: str, args: list[str]) -> None:
         sys.exit(1)
 
 
+def _run_daemon_management(command: str, args: list[str]) -> None:
+    client = CcsClient()
+    try:
+        client.ensure_daemon()
+        if command == "list":
+            if args == ["--json"]:
+                print(json.dumps(client.call("session.list"), indent=2, ensure_ascii=False))
+            elif args:
+                raise RuntimeError("usage: ccs list [--json]")
+            else:
+                _print_daemon_sessions(client.call("session.list"))
+        elif command == "attach":
+            if len(args) > 1:
+                raise RuntimeError("usage: ccs attach [name]")
+            _run_workbench(["--select", args[0]] if args else [])
+        elif command == "kill":
+            if len(args) != 1:
+                raise RuntimeError("usage: ccs kill <name>")
+            client.call("session.kill", {"name": args[0]})
+            print(f"Killed session '{args[0]}'")
+        elif command == "switch":
+            if not 1 <= len(args) <= 2:
+                raise RuntimeError("usage: ccs switch <name> [model]")
+            if len(args) == 2:
+                session = client.call("session.switch_model", {"name": args[0], "model": args[1]})
+            else:
+                session = client.call("session.restart", {"name": args[0]})
+            print(f"Switched session '{session['name']}' to {session['model']}")
+        elif command == "monitor":
+            _run_daemon_monitor(client, args)
+    except (RuntimeError, RpcError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _run_daemon(args: list[str]) -> None:
+    if args not in (["start"], ["ping"], ["stop"]):
+        raise SystemExit("ccs: usage: ccs daemon start|ping|stop")
+    client = CcsClient()
+    if args == ["start"]:
+        client.ensure_daemon()
+        print("ccsd started")
+        return
+    if args == ["stop"]:
+        try:
+            client.call("daemon.shutdown")
+            print("ccsd stopped")
+        except (OSError, RpcError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        return
+    try:
+        print(json.dumps(client.call("daemon.ping"), indent=2, ensure_ascii=False))
+    except (OSError, RpcError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _run_new(args: list[str]) -> None:
+    if len(args) < 2:
+        raise SystemExit("ccs: usage: ccs new <tool> <model> [tool args...] [--cc-name NAME] [--cc-project DIR] [--cc-no-attach]")
+    tool = args[0]
+    model = args[1]
+    name = None
+    project = "."
+    passthrough: list[str] = []
+    i = 2
+    while i < len(args):
+        arg = args[i]
+        if arg == "--cc-name":
+            name = _take_value(args, i, arg)
+            i += 2
+        elif arg == "--cc-project":
+            project = _take_value(args, i, arg)
+            i += 2
+        elif arg == "--cc-no-attach":
+            # Kept as a harmless compatibility flag. `ccs new` never opens UI.
+            i += 1
+        elif arg.startswith("--cc-"):
+            raise SystemExit(f"ccs: unknown option {arg}")
+        else:
+            passthrough.append(arg)
+            i += 1
+    client = CcsClient()
+    try:
+        client.ensure_daemon()
+        session = client.call(
+            "session.create",
+            {
+                "tool": tool,
+                "model": model,
+                "project": project,
+                "argv": passthrough,
+                "name": name,
+            },
+        )
+    except (RuntimeError, RpcError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Created session '{session['name']}' ({session['tool']}, {session['model']})")
+    print("Run: ccs monitor  # or ccs panel")
+
+
+def _run_restart(args: list[str]) -> None:
+    if len(args) != 1:
+        raise SystemExit("ccs: usage: ccs restart <name>")
+    client = CcsClient()
+    try:
+        client.ensure_daemon()
+        session = client.call("session.restart", {"name": args[0]})
+    except (RuntimeError, RpcError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Restarted session '{session['name']}'")
+
+
+def _run_workbench(args: list[str], *, read_only: bool = True) -> None:
+    selected = None
+    if args:
+        if len(args) == 2 and args[0] == "--select":
+            selected = args[1]
+        else:
+            raise SystemExit("ccs: usage: ccs workbench [--select NAME]")
+    try:
+        from .workbench import run_workbench
+    except ModuleNotFoundError as exc:
+        if exc.name == "textual":
+            print("Error: textual is required for ccs workbench.", file=sys.stderr)
+            print("Install with: pip install -e .", file=sys.stderr)
+            sys.exit(1)
+        raise
+    try:
+        CcsClient().ensure_daemon()
+        run_workbench(selected=selected, read_only=read_only)
+    except (RuntimeError, RpcError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _run_tmux(args: list[str]) -> None:
+    if not args:
+        raise SystemExit("ccs: usage: ccs tmux <list|attach|kill|switch|monitor|tui|claude>")
+    head, rest = args[0], args[1:]
+    if head == "claude":
+        _run_tmux_tool("claude", rest)
+        return
+    if head == "tui":
+        _run_tui(rest)
+        return
+    if head in {"list", "attach", "kill", "switch", "monitor"}:
+        _run_tmux_management(head, rest)
+        return
+    raise SystemExit(f"ccs: unknown tmux command '{head}'")
+
+
+def _print_daemon_sessions(sessions: list[dict]) -> None:
+    if not sessions:
+        print("No sessions. Use 'ccs new claude ds/flash' or run 'ccs'.")
+        return
+    hdr = f"{'Name':<24} {'Tool':<10} {'Model':<24} {'Status':<10} Project"
+    print(hdr)
+    print("-" * len(hdr))
+    for session in sessions:
+        print(
+            f"{session['name']:<24} {session['tool']:<10} {session['model']:<24} "
+            f"{session['status']:<10} {session.get('project_name') or Path(session['project']).name}"
+        )
+
+
+def _run_daemon_monitor(client: CcsClient, args: list[str]) -> None:
+    names, lines, interval, once = _parse_monitor_args(args)
+    try:
+        while True:
+            sessions = client.call("session.list")
+            if names:
+                wanted = set(names)
+                sessions = [session for session in sessions if session["name"] in wanted or session["id"] in wanted]
+                missing = wanted - {session["name"] for session in sessions} - {session["id"] for session in sessions}
+                if missing:
+                    raise RuntimeError(f"session not found: {', '.join(sorted(missing))}")
+            print("\033[H\033[2J", end="")
+            print("ccs monitor")
+            print("Ctrl-C quit | ccs attach <name> to interact")
+            print("")
+            for session in sessions:
+                snap = client.call("terminal.snapshot", {"name": session["id"], "lines": lines})
+                print(f"===== {session['name']} | {session['tool']} | {session['model']} | {session['status']} =====")
+                print("\n".join(snap["lines"]))
+                print("")
+            sys.stdout.flush()
+            if once:
+                return
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        return
+
+
 def _run_tool(tool: str, args: list[str]) -> None:
+    opts, passthrough, managed = _parse_cc_options(args)
+    if not managed:
+        _exec_tool(tool, passthrough)
+        return
+    if opts.reuse or opts.no_attach:
+        print(
+            "Error: --cc-reuse/--cc-no-attach create managed-session expectations. "
+            "Use 'ccs new ... --cc-no-attach' or 'ccs tmux claude ...'.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if opts.dry_run:
+        _print_launcher_dry_run(tool, opts, passthrough)
+        return
+    _exec_launcher_tool(tool, opts, passthrough)
+
+
+def _run_tmux_tool(tool: str, args: list[str]) -> None:
     opts, passthrough, managed = _parse_cc_options(args)
     if tool != "claude":
         if managed:
-            print(f"ccs: managed sessions for '{tool}' are not implemented yet", file=sys.stderr)
+            print(f"ccs: legacy tmux sessions for '{tool}' are not implemented", file=sys.stderr)
             sys.exit(1)
         _exec_tool(tool, passthrough)
         return
-
     if not managed:
         _exec_tool("claude", passthrough)
         return
-
-    name = opts.name
-    project = opts.project
     if opts.dry_run and not opts.reuse:
-        _print_claude_dry_run(name, project, opts.model, passthrough)
+        _print_claude_dry_run(opts.name, opts.project, opts.model, passthrough)
         return
-
     mgr = _manager()
     if opts.reuse:
         try:
@@ -410,13 +716,12 @@ def _run_tool(tool: str, args: list[str]) -> None:
             print(f"Error: {exc}", file=sys.stderr)
             sys.exit(1)
         if session is not None and opts.no_attach:
-            print(f"Updated session '{session.name}' ({session.tool}, {session.model})")
+            print(f"Updated tmux session '{session.name}' ({session.tool}, {session.model})")
         return
-
     try:
         session = mgr.create_claude(
-            name=name,
-            project=project,
+            name=opts.name,
+            project=opts.project,
             model=opts.model,
             passthrough=passthrough,
             attach=not opts.no_attach,
@@ -425,9 +730,8 @@ def _run_tool(tool: str, args: list[str]) -> None:
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
-
     if session is not None and opts.no_attach:
-        print(f"Created session '{session.name}' ({session.tool}, {session.model})")
+        print(f"Created tmux session '{session.name}' ({session.tool}, {session.model})")
 
 
 def _run_switch(mgr: SessionManager, args: list[str]) -> None:
@@ -870,6 +1174,89 @@ def _print_claude_dry_run(
     print(f"settings: {settings or '(default)'}")
     print(f"config_dir: {config_dir}")
     print(f"command: {SessionManager._shell_command(argv, config_dir)}")
+
+
+def _print_launcher_dry_run(tool: str, opts: CcsOptions, passthrough: list[str]) -> None:
+    command, env = _launcher_command(tool, opts, passthrough, create=False)
+    project_path = str(Path(opts.project).expanduser().resolve())
+    model = opts.model or "default"
+    print(f"backend: launcher")
+    print(f"tool: {tool}")
+    print(f"name: {opts.name or '(none)'}")
+    print(f"project: {project_path}")
+    print(f"model: {model}")
+    print(f"env: {json.dumps(env, ensure_ascii=False)}")
+    print(f"command: {shlex.join(command)}")
+    print("managed: no")
+
+
+def _exec_launcher_tool(tool: str, opts: CcsOptions, passthrough: list[str]) -> None:
+    command, env_overrides = _launcher_command(tool, opts, passthrough, create=True)
+    env = os.environ.copy()
+    env.update(env_overrides)
+    project = str(Path(opts.project).expanduser().resolve())
+    try:
+        os.chdir(project)
+        os.execvpe(command[0], command, env)
+    except FileNotFoundError:
+        print(f"Error: {tool} not found on PATH", file=sys.stderr)
+        sys.exit(127)
+
+
+def _launcher_command(
+    tool: str,
+    opts: CcsOptions,
+    passthrough: list[str],
+    *,
+    create: bool,
+) -> tuple[list[str], dict[str, str]]:
+    model = opts.model or "default"
+    if tool == "claude":
+        return _launcher_claude_command(opts, passthrough, model, create=create)
+    resolved = resolve_model_spec(model)
+    if tool == "codex":
+        return ["codex", "--model", resolved.actual_model, *passthrough], {}
+    if tool == "opencode":
+        return ["opencode", "--model", resolved.actual_model, *passthrough], {}
+    raise SystemExit(f"ccs: unsupported tool '{tool}'")
+
+
+def _launcher_claude_command(
+    opts: CcsOptions,
+    passthrough: list[str],
+    model: str,
+    *,
+    create: bool,
+) -> tuple[list[str], dict[str, str]]:
+    from . import profile_to_settings
+    from .models import resolved_to_profile
+
+    resolved = resolve_model_spec(model)
+    command = ["claude"]
+    env: dict[str, str] = {}
+    base = Path(os.environ.get("CCS_LAUNCHER_HOME", str(Path.home() / ".ccs" / "launcher"))).expanduser()
+    session_key = opts.name or f"{SessionManager._slug(model)}-{SessionManager._slug(str(Path(opts.project).resolve()).split('/')[-1] or 'project')}"
+    run_dir = base / SessionManager._slug(session_key)
+    config_dir = run_dir / "claude-config"
+    if create:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        run_dir.chmod(0o700)
+        config_dir.mkdir(exist_ok=True)
+        config_dir.chmod(0o700)
+    env["CLAUDE_CONFIG_DIR"] = str(config_dir)
+    if resolved.actual_model != "default":
+        validate_runtime_key(resolved)
+        settings = run_dir / "claude.settings.json"
+        if create:
+            settings.write_text(
+                json.dumps(profile_to_settings(resolved_to_profile(resolved)), indent=2, ensure_ascii=False) + "\n"
+            )
+            settings.chmod(0o600)
+        command.extend(["--settings", str(settings)])
+    if opts.name and "--name" not in passthrough and "-n" not in passthrough:
+        command.extend(["--name", opts.name])
+    command.extend(passthrough)
+    return command, env
 
 
 def _validate_claude_model(model: str | None):

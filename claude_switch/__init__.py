@@ -148,6 +148,13 @@ PROVIDER_PRESETS = {
         "auth_mode": "bearer",
         "desc": "OpenRouter Anthropic-compatible 端点, 支持 200+ 模型",
     },
+    "openai": {
+        "name": "OpenAI",
+        "base_url": None,
+        "env_key": "OPENAI_API_KEY",
+        "auth_mode": "bearer",
+        "desc": "OpenAI API",
+    },
 }
 
 BUILTIN = {
