@@ -1,13 +1,16 @@
 # ccs
 
-`ccs` 是 Code CLI Suite：面向 Claude Code、Codex、OpenCode 等 code CLI 的快速启动工具。
+English | [中文](README.zh-CN.md)
 
-它不接管原工具 UI，不做 TUI、tmux session 或 daemon。`ccs` 只做四件事：
+`ccs` is a lightweight Code CLI Suite for launching Claude Code, Codex, and OpenCode with native arguments, fast model switching, quick launch modes, and shared project memory.
 
-- 保留原工具参数使用方式
-- 统一一次性模型覆盖和默认模型
-- 提供 `--cc-auto`、`--cc-danger`、`--cc-plan` 快速模式
-- 通过 `.ccs/memory.md` 共享项目记忆
+It does not wrap or redraw the original tool UI. It only helps with:
+
+- preserving each tool's native command-line arguments
+- setting per-app or global default models
+- using one-shot model overrides
+- mapping quick modes such as `--cc-auto`, `--cc-danger`, and `--cc-plan`
+- sharing project memory through `.ccs/memory.md`
 
 ## Quick Start
 
@@ -19,7 +22,7 @@ ccs use claude ds/flash
 ccs claude
 ```
 
-## 启动 App
+## Launch Apps
 
 ```bash
 ccs claude
@@ -27,7 +30,7 @@ ccs codex
 ccs opencode
 ```
 
-app 后面的非 `--cc-*` 参数全部原样传给原工具：
+Arguments that are not prefixed with `--cc-` are passed through to the original app:
 
 ```bash
 ccs claude --permission-mode plan
@@ -35,7 +38,7 @@ ccs codex --sandbox workspace-write "fix tests"
 ccs opencode run "review this repo"
 ```
 
-纯原生命令会直接透传，不注入模型和记忆：
+Native utility commands are passed through without model or memory injection:
 
 ```bash
 ccs claude --help
@@ -43,9 +46,9 @@ ccs claude doctor
 ccs codex --help
 ```
 
-## 模型
+## Models
 
-一次性覆盖模型：
+Use a model for one launch:
 
 ```bash
 ccs claude --cc-model an/sonnet
@@ -53,7 +56,7 @@ ccs codex --cc-model openai/gpt-5
 ccs opencode --cc-model or/kimi-k2.6
 ```
 
-设置默认模型：
+Set default models:
 
 ```bash
 ccs use claude ds/flash
@@ -63,15 +66,15 @@ ccs use ds/flash
 ccs current
 ```
 
-覆盖顺序：
+Model precedence:
 
 ```text
-原生 app 模型参数 > --cc-model > app 默认模型 > 全局默认模型 > 原工具自身默认
+native app model flag > --cc-model > app default model > global default model > original app default
 ```
 
-如果同一次命令同时写 `--cc-model` 和原生 `--model` / `-m`，`ccs` 会报错。
+If `--cc-model` and a native model flag such as `--model` or `-m` are used in the same command, `ccs` reports a conflict.
 
-## 快速模式
+## Quick Modes
 
 ```bash
 ccs claude --cc-auto
@@ -85,37 +88,37 @@ ccs opencode --cc-danger
 ccs claude --cc-plan
 ```
 
-映射规则：
+Mode mapping:
 
-| 模式 | Claude | Codex | OpenCode |
+| Mode | Claude | Codex | OpenCode |
 | --- | --- | --- | --- |
 | `--cc-auto` | `--permission-mode auto` | `--ask-for-approval never` | `--auto` |
-| `--cc-danger` | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | `--auto` 并提示 |
-| `--cc-plan` | `--permission-mode plan` | 不支持 | 不支持 |
+| `--cc-danger` | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | `--auto` with a warning |
+| `--cc-plan` | `--permission-mode plan` | unsupported | unsupported |
 
-## 共享记忆
+## Shared Memory
 
-`ccs` 默认使用项目内的 `.ccs/memory.md` 作为跨 CLI 共享记忆。
+`ccs` uses `.ccs/memory.md` as the shared project memory across supported code CLIs.
 
 ```bash
 ccs memory init
-ccs memory note "Codex 额度用完，后续用 Claude Code 继续。"
-ccs memory task "继续实现 defaults.py。"
-ccs memory decision "TUI 路线不进入主接口。"
+ccs memory note "Codex quota is exhausted; continue with Claude Code."
+ccs memory task "Continue implementing defaults.py."
+ccs memory decision "TUI is not part of the main interface."
 ccs memory show
 ccs memory status
 ccs memory path
 ```
 
-`ccs <app>` 默认会注入记忆读取提示。关闭本次记忆注入：
+By default, `ccs <app>` injects a short memory prelude. Disable it for one launch:
 
 ```bash
 ccs claude --cc-no-memory
 ```
 
-`.ccs/memory.local.md` 默认不提交，也默认不注入。
+`.ccs/memory.local.md` is ignored by default and is not injected by default.
 
-## 模型和 Provider
+## Models And Providers
 
 ```bash
 ccs providers
@@ -126,26 +129,24 @@ ccs models add or/qwen3-coder qwen/qwen3-coder
 ccs models rm or/qwen3-coder
 ```
 
-`ccs` 不保存 API key。Provider 只显示环境变量是否存在，不打印密钥内容。
+`ccs` does not store API keys. Provider commands only show whether the relevant environment variable is set.
 
-## 开发与测试
+## Development
 
-测试文件放在 `tests/` 下：
+Tests live under `tests/`:
 
 ```bash
 python -m unittest discover -s tests
 python -m compileall ccs
 ```
 
-历史代码、实验原型和旧 README 统一放在 `docs/backup/`。
+Historical code, experiments, and legacy README files are stored under `docs/backup/`.
 
-## 不做什么
+## What It Does Not Do
 
-- 不注册 `claude-switch`
-- 不提供 `ccs tui`
-- 不提供 `ccs tmux`
-- 不提供 `ccs daemon`
-- 不管理私有 session
-- 不承诺不同 CLI 的私有 session 无损迁移
+- No TUI.
+- No tmux session manager.
+- No daemon.
+- No private session migration.
+- No API key storage.
 
-旧代码已经归档到 `docs/backup/`。
