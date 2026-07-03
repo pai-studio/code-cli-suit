@@ -1,248 +1,151 @@
 # ccs
 
-`ccs` 是一个极低负担的代码工具启动器：用 `provider/model` 选择模型，然后启动原始工具 UI。
+`ccs` 是 Code CLI Suite：面向 Claude Code、Codex、OpenCode 等 code CLI 的快速启动工具。
 
-当前稳定主路径只有两条：
+它不接管原工具 UI，不做 TUI、tmux session 或 daemon。`ccs` 只做四件事：
 
-- 轻量 launcher：`ccs claude --cc-model ds/flash`
-- 可选 tmux session：`ccs tmux claude --cc-name code --cc-model ds/flash`
-
-`ccs` 不保存 API key，不接管 Claude Code 的交互界面，不默认打开 panel。
+- 保留原工具参数使用方式
+- 统一一次性模型覆盖和默认模型
+- 提供 `--cc-auto`、`--cc-danger`、`--cc-plan` 快速模式
+- 通过 `.ccs/memory.md` 共享项目记忆
 
 ## Quick Start
 
 ```bash
-# 安装
 pip install -e . --no-build-isolation
 
-# 查看 provider 和模型
-ccs providers
-ccs models
-
-# 轻量启动原始 Claude Code UI
-ccs claude --cc-model ds/flash
-
-# Claude 原始参数照常写在后面
-ccs claude --cc-model an/sonnet --permission-mode acceptEdits
-
-# 原始 Claude help 也照常可用
-ccs claude --help
+ccs memory init
+ccs use claude ds/flash
+ccs claude
 ```
 
-## 推荐心智模型
-
-`ccs claude ...` 应该被理解成“带模型注入能力的 `claude ...`”。
-
-规则只有一个：`ccs` 只解析 `--cc-*` 参数，其余参数全部原样传给 Claude。
+## 启动 App
 
 ```bash
-ccs claude --cc-model ds/flash --permission-mode acceptEdits
+ccs claude
+ccs codex
+ccs opencode
 ```
 
-这里：
+app 后面的非 `--cc-*` 参数全部原样传给原工具：
 
-- `--cc-model ds/flash` 属于 `ccs`
-- `--permission-mode acceptEdits` 属于 Claude
+```bash
+ccs claude --permission-mode plan
+ccs codex --sandbox workspace-write "fix tests"
+ccs opencode run "review this repo"
+```
 
-当指定 `--cc-model` 时，`ccs` 会为本次启动生成隔离的 Claude 配置，然后直接执行原始 `claude`。它不会进入 tmux，不会创建后台 daemon session，也不会打开 UI panel。
-
-未指定任何 `--cc-*` 参数时，`ccs claude ...` 直接透传：
+纯原生命令会直接透传，不注入模型和记忆：
 
 ```bash
 ccs claude --help
-ccs claude auth
 ccs claude doctor
+ccs codex --help
 ```
 
-## 多窗口还是 tmux
+## 模型
 
-如果你的目标只是同时开两个 Claude Code，例如一个写代码、一个 review，最简单的方案是开两个终端窗口：
+一次性覆盖模型：
 
 ```bash
-# terminal 1
-ccs claude --cc-name code --cc-model ds/flash
-
-# terminal 2
-ccs claude --cc-name review --cc-model an/sonnet
+ccs claude --cc-model an/sonnet
+ccs codex --cc-model openai/gpt-5
+ccs opencode --cc-model or/kimi-k2.6
 ```
 
-这是默认推荐路径。它最接近原始 Claude Code，界面最干净，出问题的组件最少。
-
-tmux 的意义是可选的 session 管理能力：
-
-- 终端关闭后 session 仍可继续运行
-- 可以按名字重新 attach
-- 适合远程机器、长任务、临时断线
-- 可以统一 list/kill/switch 命名 session
-
-如果你不需要这些能力，不需要使用 tmux。
-
-## tmux Session
-
-tmux 路线必须显式写 `ccs tmux ...`，避免和轻量 launcher 混用。
+设置默认模型：
 
 ```bash
-ccs tmux claude --cc-name code --cc-model ds/flash
-ccs tmux claude --cc-name review --cc-model an/sonnet
-
-ccs tmux attach code
-ccs tmux attach review
+ccs use claude ds/flash
+ccs use codex openai/gpt-5
+ccs use opencode or/kimi-k2.6
+ccs use ds/flash
+ccs current
 ```
 
-常用管理命令：
-
-```bash
-ccs tmux list
-ccs tmux attach <name>
-ccs tmux switch <name> [model]
-ccs tmux kill <name>
-ccs tmux monitor <name> --lines 80
-ccs tui
-```
-
-`ccs tmux attach <name>` 会为每个会话使用独立 view session，避免两个终端 attach 到同一个 tmux session 后同步当前窗口和输入。
-
-tmux 默认不启用 mouse，因为 mouse 会干扰 Claude Code 的焦点。如果你明确需要鼠标滚动：
-
-```bash
-export CCS_TMUX_MOUSE=1
-```
-
-如果老用户想显示 tmux 侧边状态栏：
-
-```bash
-export CCS_TMUX_SIDEBAR=1
-```
-
-## 模型写法
-
-统一使用 `provider/model`：
+覆盖顺序：
 
 ```text
-an/sonnet
-an/opus
-ds/flash
-ds/pro
-or/kimi-k2.6
-or/glm-5
-or/gemini-2.5-flash
-mm/m2.7
-openai/gpt-5
+原生 app 模型参数 > --cc-model > app 默认模型 > 全局默认模型 > 原工具自身默认
 ```
 
-Provider 可以用简称：
+如果同一次命令同时写 `--cc-model` 和原生 `--model` / `-m`，`ccs` 会报错。
 
-| 简称 | Provider | API key |
-| --- | --- | --- |
-| `an` | `anthropic` | `ANTHROPIC_API_KEY` |
-| `ds` | `deepseek` | `DEEPSEEK_API_KEY` |
-| `or` | `openrouter` | `OPENROUTER_API_KEY` |
-| `mm` | `minimax` | `MINIMAX_API_KEY` |
-| `openai` | `openai` | `OPENAI_API_KEY` |
-
-OpenRouter 也保持严格两段式：
-
-```text
-or/kimi-k2.6 -> moonshotai/kimi-k2.6
-```
-
-添加自己的 OpenRouter 映射：
+## 快速模式
 
 ```bash
-ccs models add or/qwen3-coder qwen/qwen3-coder
-ccs model show or/qwen3-coder
+ccs claude --cc-auto
+ccs codex --cc-auto
+ccs opencode --cc-auto
+
+ccs claude --cc-danger
+ccs codex --cc-danger
+ccs opencode --cc-danger
+
+ccs claude --cc-plan
 ```
 
-## API Key
+映射规则：
 
-`ccs` 不管理密钥，也不提供 `store-key`。请使用环境变量：
+| 模式 | Claude | Codex | OpenCode |
+| --- | --- | --- | --- |
+| `--cc-auto` | `--permission-mode auto` | `--ask-for-approval never` | `--auto` |
+| `--cc-danger` | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | `--auto` 并提示 |
+| `--cc-plan` | `--permission-mode plan` | 不支持 | 不支持 |
+
+## 共享记忆
+
+`ccs` 默认使用项目内的 `.ccs/memory.md` 作为跨 CLI 共享记忆。
 
 ```bash
-export DEEPSEEK_API_KEY="sk-xxx"
-export OPENROUTER_API_KEY="sk-or-v1-xxx"
-export MINIMAX_API_KEY="sk-xxx"
-export ANTHROPIC_API_KEY="sk-ant-xxx"
+ccs memory init
+ccs memory note "Codex 额度用完，后续用 Claude Code 继续。"
+ccs memory task "继续实现 defaults.py。"
+ccs memory decision "TUI 路线不进入主接口。"
+ccs memory show
+ccs memory status
+ccs memory path
 ```
 
-`ccs providers` 只显示 `set` / `missing`，不会打印密钥内容。
-
-## ccs 参数
-
-| 参数 | 说明 |
-| --- | --- |
-| `--cc-model <model>` | 指定 `provider/model` |
-| `--cc-name <name>` | 指定隔离配置或 tmux session 名；不填会自动生成 |
-| `--cc-project <dir>` | 指定项目目录，默认当前目录 |
-| `--cc-dry-run` | 打印将执行的命令，不真正启动 |
-| `--cc-no-attach` | 仅用于 `ccs tmux claude` |
-
-## 常用命令
+`ccs <app>` 默认会注入记忆读取提示。关闭本次记忆注入：
 
 ```bash
-ccs --help
-ccs --help-zh
+ccs claude --cc-no-memory
+```
 
+`.ccs/memory.local.md` 默认不提交，也默认不注入。
+
+## 模型和 Provider
+
+```bash
 ccs providers
 ccs models
-ccs models or
+ccs models openrouter
 ccs model show ds/flash
-
-ccs claude --cc-model ds/flash
-ccs claude --cc-model an/sonnet --permission-mode acceptEdits
-ccs claude --cc-model or/kimi-k2.6 --cc-project ~/work/app
-ccs claude --cc-model ds/flash --cc-dry-run
-
-ccs tmux claude --cc-name code --cc-model ds/flash
-ccs tmux attach code
-ccs tmux list
+ccs models add or/qwen3-coder qwen/qwen3-coder
+ccs models rm or/qwen3-coder
 ```
 
-## claude-switch 兼容命令
+`ccs` 不保存 API key。Provider 只显示环境变量是否存在，不打印密钥内容。
 
-旧命令仍保留：
+## 开发与测试
+
+测试文件放在 `tests/` 下：
 
 ```bash
-claude-switch list
-claude-switch deepseek-pro
-claude-switch deepseek-flash
-claude-switch openrouter/kimi-k2.6
+python -m unittest discover -s tests
+python -m compileall ccs
 ```
 
-`ccs --cc-model` 也兼容旧名称：
+历史代码、实验原型和旧 README 统一放在 `docs/backup/`。
 
-```bash
-ccs claude --cc-model deepseek-flash
-ccs claude --cc-model openrouter/kimi-k2.6
-```
+## 不做什么
 
-## Troubleshooting
+- 不注册 `claude-switch`
+- 不提供 `ccs tui`
+- 不提供 `ccs tmux`
+- 不提供 `ccs daemon`
+- 不管理私有 session
+- 不承诺不同 CLI 的私有 session 无损迁移
 
-### `ccs: claude not found`
-
-安装 Claude Code，并确认：
-
-```bash
-claude --help
-```
-
-### `tmux not found`
-
-只有 `ccs tmux ...` 需要 tmux：
-
-```bash
-brew install tmux
-```
-
-### `unknown model spec '<name>'`
-
-查看可用模型：
-
-```bash
-ccs models
-```
-
-然后使用 `provider/model`：
-
-```bash
-ccs claude --cc-model ds/flash
-```
+旧代码已经归档到 `docs/backup/`。

@@ -1,23 +1,19 @@
 [project]
-name = "claude-switch"
-version = "0.5.0"
-description = "一键切换 claude-code 模型 — 像 opencode 一样在多 provider 间自由切换"
+name = "ccs"
+version = "0.6.0"
+description = "Code CLI Suite: launch Claude Code, Codex and OpenCode with shared memory"
 requires-python = ">=3.10"
 license = "MIT"
 readme = "README.md"
-dependencies = [
-    "textual>=0.80",
-    "pyte>=0.8",
-]
+dependencies = []
 
 [project.scripts]
-claude-switch = "claude_switch:main"
-ccs = "claude_switch.ccs:main"
+ccs = "ccs.cli:main"
 
 [build-system]
 requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["claude_switch*"]
-exclude = ["labs*"]
+include = ["ccs*"]
+exclude = ["backup*", "labs*"]
